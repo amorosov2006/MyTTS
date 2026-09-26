@@ -33,14 +33,19 @@
   // true only between segments (not started yet / previous one ended): sample updates arrive
   // many times while a segment is playing and must not restart it.
   let liveWaiting = false;
+  let livePlayed = new Set<string>();
   const LIVE_GAP_MS = 300;
 
   // The server lists sample segments in reading order, gap-free, so walking by index plays
   // each segment exactly once, in order; when caught up we wait for the next update.
   function watchLive(sample: SampleInfo) {
     if (livePlayingId !== sample.id || !liveWaiting || !liveAudio) return;
+    while (liveSegIndex < sample.segments.length && livePlayed.has(sample.segments[liveSegIndex])) {
+      liveSegIndex += 1; // never play a segment twice
+    }
     if (liveSegIndex < sample.segments.length) {
       liveWaiting = false;
+      livePlayed.add(sample.segments[liveSegIndex]);
       liveAudio.src = sample.segments[liveSegIndex];
       liveAudio.play().catch(() => {});
     }
@@ -53,6 +58,7 @@
   function startLivePlayback(sample: SampleInfo) {
     livePlayingId = sample.id;
     liveSegIndex = 0;
+    livePlayed = new Set();
     liveWaiting = true;
     watchLive(sample);
   }

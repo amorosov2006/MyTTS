@@ -572,4 +572,15 @@ def normalize(text: str) -> str:
     text = _replace_bare_cardinals(text)
     text = _WS_RE.sub(" ", text).strip()
     text = _restore_terminal_punct(original, text)
-    return text
+    return _join_hyphenated(text)
+
+
+# Qwen3-TTS reads a plain hyphen inside a word as a break ("что-то" -> "что… то"). Measured
+# (bench/hyphen_test.py, 2 voices): gaps/sentence 1.48 with "-", 1.04 with a zero-width
+# joiner, pronunciation unchanged per Whisper. Only letter-hyphen-letter; dashes keep pausing.
+_INTRAWORD_HYPHEN_RE = re.compile(r"(?<=[А-Яа-яЁё])[-\u2010\u2011](?=[А-Яа-яЁё])")
+ZWJ = "\u200d"
+
+
+def _join_hyphenated(text: str) -> str:
+    return _INTRAWORD_HYPHEN_RE.sub(ZWJ, text)

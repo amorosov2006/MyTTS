@@ -1,0 +1,13 @@
+[project]
+name = "mytts"
+version = "0.1.0"
+description = "Offline book-to-audiobook converter (Qwen3-TTS on MLX)"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "mlx-audio",
+    "soundfile",
+    "numpy",
+]
+
+[tool.uv]
+package = false

@@ -1,0 +1,7 @@
+.venv/
+models/
+__pycache__/
+*.pyc
+node_modules/
+bench/out/
+.DS_Store

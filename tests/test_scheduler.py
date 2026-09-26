@@ -339,3 +339,36 @@ async def test_stop_is_bounded_even_during_a_long_batch(scheduler_factory, sampl
     t0 = asyncio.get_running_loop().time()
     await sch.stop(timeout_s=0.5)
     assert asyncio.get_running_loop().time() - t0 < 3
+
+
+async def test_sample_segment_urls_are_in_reading_order_without_gaps(scheduler_factory, sample_book_txt):
+    """Post-processing finishes out of order; the live-playback list must stay ordered/gap-free."""
+    import random
+    import time as _time
+
+    sch = scheduler_factory()
+    real = sch.services.process_segment
+
+    def jittery(raw, out, speed=1.0):
+        _time.sleep(random.uniform(0, 0.05))
+        return real(raw, out, speed)
+
+    sch.services.process_segment = jittery
+    await sch.start()
+    try:
+        info = await sch.create_job(sample_book_txt, "sample_book.txt")
+        smp = await sch.create_sample(info.id, SampleRequest(seconds=60))
+        seen: list[list[str]] = []
+        sid, q = sch.bus.subscribe()
+        await _wait_for(lambda: sch.get_sample(info.id, smp.id).status == "done", timeout=10)
+        while not q.empty():
+            e = q.get_nowait()
+            if e.type == "sample" and e.data["id"] == smp.id:
+                seen.append(e.data["segments"])
+        sch.bus.unsubscribe(sid)
+        final = sch.get_sample(info.id, smp.id).segments
+        assert final == sorted(final) and len(final) == len(set(final))
+        for urls in seen:  # every intermediate list is a prefix of the final one
+            assert urls == final[:len(urls)]
+    finally:
+        await sch.stop()

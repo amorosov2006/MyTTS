@@ -705,6 +705,7 @@ class Scheduler:
                                     settings: JobSettings) -> None:
         if not result.ok:
             self.store.mark_sample_segment_failed(sample_id, seg_row["id"])
+            self.store.refresh_sample_segment_urls(sample_id, job_id)
         else:
             out_wav = self.store.processed_sample_wav_path(job_id, sample_id, seg_row["id"])
             loop = asyncio.get_running_loop()
@@ -716,13 +717,13 @@ class Scheduler:
             except Exception:
                 log.exception("sample post-processing failed")
                 self.store.mark_sample_segment_failed(sample_id, seg_row["id"])
+                self.store.refresh_sample_segment_urls(sample_id, job_id)
                 self._publish_sample(sample_id)
                 if self.store.sample_segments_pending_count(sample_id) == 0:
                     await self._finish_sample(sample_id, job_id, settings)
                 return
             self.store.mark_sample_segment_done(sample_id, seg_row["id"], str(out_wav), duration)
-            url = f"/api/jobs/{job_id}/samples/{sample_id}/segments/{seg_row['id']}/audio"
-            self.store.append_sample_segment_url(sample_id, url)
+            self.store.refresh_sample_segment_urls(sample_id, job_id)
         self._publish_sample(sample_id)
         if self.store.sample_segments_pending_count(sample_id) == 0:
             await self._finish_sample(sample_id, job_id, settings)

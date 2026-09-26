@@ -538,10 +538,16 @@ class Store:
         with self._lock, self._conn:
             self._conn.execute(f"UPDATE samples SET {', '.join(cols)} WHERE id=?", vals)
 
-    def append_sample_segment_url(self, sample_id: str, url: str) -> None:
-        row = self.get_sample(sample_id)
-        urls = json.loads(row["segments"]) if row else []
-        urls.append(url)
+    def refresh_sample_segment_urls(self, sample_id: str, job_id: str) -> None:
+        """SampleInfo.segments = playable segment URLs in READING order, and only the gap-free
+        prefix: segments finish post-processing in parallel (out of order), and a player walking
+        this list must never skip ahead or see a segment twice. Failed segments are passed over."""
+        urls = []
+        for r in self.sample_segments_ordered(sample_id):
+            if r["status"] == "done":
+                urls.append(f"/api/jobs/{job_id}/samples/{sample_id}/segments/{r['id']}/audio")
+            elif r["status"] != "failed":
+                break
         self.update_sample(sample_id, segments=urls)
 
     def raw_sample_wav_path(self, job_id: str, sample_id: str, segment_id: str) -> Path:

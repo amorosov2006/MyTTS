@@ -60,9 +60,6 @@
   };
 
   async function start() {
-    if (!job.sample_approved) {
-      if (!confirm("Start without listening to a sample?\n\nYou haven't approved a sample with the current settings.")) return;
-    }
     busy = true;
     try {
       const updated = await api.startJob(job.id);
@@ -111,12 +108,6 @@
 <div class="max-w-3xl mx-auto p-6 space-y-6">
   {#if job.status === "parsed"}
     <div class="rounded-2xl border border-border bg-surface p-8 text-center">
-      {#if !job.sample_approved}
-        <div class="flex items-center justify-center gap-2 text-warning text-sm mb-4">
-          <Icon name="alert-triangle" size={15} />
-          No approved sample yet for the current settings.
-        </div>
-      {/if}
       <button
         class="inline-flex items-center gap-2 rounded-xl bg-accent text-accent-fg font-semibold px-6 py-3.5 text-base hover:bg-accent-hover transition-colors disabled:opacity-60"
         onclick={start}

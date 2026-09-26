@@ -28,16 +28,21 @@
   const latest = $derived(samples[0] ?? null);
 
   let liveAudio: HTMLAudioElement | null = $state(null);
-  let liveSegIndex = $state(0);
+  let liveSegIndex = 0;
   let livePlayingId = $state<string | null>(null);
+  // true only between segments (not started yet / previous one ended): sample updates arrive
+  // many times while a segment is playing and must not restart it.
+  let liveWaiting = false;
+  const LIVE_GAP_MS = 300;
 
+  // The server lists sample segments in reading order, gap-free, so walking by index plays
+  // each segment exactly once, in order; when caught up we wait for the next update.
   function watchLive(sample: SampleInfo) {
-    if (livePlayingId !== sample.id) return;
+    if (livePlayingId !== sample.id || !liveWaiting || !liveAudio) return;
     if (liveSegIndex < sample.segments.length) {
-      const el = liveAudio;
-      if (!el) return;
-      el.src = sample.segments[liveSegIndex];
-      el.play().catch(() => {});
+      liveWaiting = false;
+      liveAudio.src = sample.segments[liveSegIndex];
+      liveAudio.play().catch(() => {});
     }
   }
 
@@ -48,13 +53,18 @@
   function startLivePlayback(sample: SampleInfo) {
     livePlayingId = sample.id;
     liveSegIndex = 0;
+    liveWaiting = true;
     watchLive(sample);
   }
 
   function onLiveEnded() {
+    if (livePlayingId === null) return; // a full sample from the history finished
     liveSegIndex += 1;
-    const sample = samples.find((s) => s.id === livePlayingId);
-    if (sample) watchLive(sample);
+    setTimeout(() => {
+      liveWaiting = true;
+      const sample = samples.find((s) => s.id === livePlayingId);
+      if (sample) watchLive(sample);
+    }, LIVE_GAP_MS);
   }
 
   async function renderSample() {

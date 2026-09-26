@@ -57,6 +57,7 @@ The `/api/system` response:
 | POST | `/api/jobs/{id}/pause` | — | `JobInfo` |
 | POST | `/api/jobs/{id}/resume` | — | `JobInfo` |
 | POST | `/api/jobs/{id}/cancel` | — | `JobInfo` |
+| POST | `/api/jobs/{id}/duplicate` | — | `201 JobInfo`: "Convert again", a new `parsed` job with the same book, chapter edits and settings; its output goes to its own folder |
 | POST | `/api/jobs/{id}/reveal` | — | `204`: opens the book's output folder in Finder, or `404` if it doesn't exist yet |
 | GET | `/api/jobs/{id}/samples/{sid}/segments/{segment_id}/audio` | — | `audio/wav`: one processed sample segment, for progressive sample playback |
 | GET | `/api/jobs/{id}/segments/{segment_id}/audio` | — | `audio/wav`: the processed segment (trimmed, speed applied), for playing a chapter while it is still being generated |

@@ -22,7 +22,7 @@ from typing import Optional
 
 from mytts import config
 from mytts.contracts import (
-    Chapter, Event, JobInfo, JobSettings, JobStatus, Lang, OutputFormat, Progress,
+    Book, Chapter, Event, JobInfo, JobSettings, JobStatus, Lang, OutputFormat, Progress,
     SampleInfo, SampleRequest, Segment, SynthesisItem, SynthesisResult, TTSWorker,
     WorkerCrashed,
 )
@@ -154,6 +154,21 @@ class Scheduler:
             shutil.rmtree(tmp_dir, ignore_errors=True)
         return self.store.get_job_info(job_id)
 
+    def duplicate_job(self, job_id: str) -> JobInfo:
+        """"Convert again": a fresh job (status parsed) with the same book, chapter edits and
+        settings, so a finished book can be re-rendered with another voice/style. Its output
+        goes to its own folder ("... (2)")."""
+        info = self._require_job(job_id)
+        bj = self.store.read_book_json(job_id)
+        if bj.get("cover"):
+            bj["cover"] = base64.b64decode(bj["cover"])
+        book = Book.model_validate(bj)
+        upload = next(self.store.job_workdir(job_id).glob("upload.*"))
+        new_id_ = self.store.create_job(book, info.settings, upload)
+        self.store.update_chapters_meta(
+            new_id_, [{"index": c.index, "title": c.title, "include": c.include} for c in info.chapters])
+        return self.store.get_job_info(new_id_)
+
     def get_job(self, job_id: str) -> JobInfo:
         return self._require_job(job_id)
 
@@ -256,7 +271,8 @@ class Scheduler:
 
     async def create_sample(self, job_id: str, req: SampleRequest) -> SampleInfo:
         info = self._require_job(job_id)
-        if info.status not in (JobStatus.parsed, JobStatus.paused, JobStatus.running):
+        if info.status not in (JobStatus.parsed, JobStatus.paused, JobStatus.running,
+                               JobStatus.done, JobStatus.cancelled):
             raise ConflictError(f"cannot sample a job in status {info.status.value}")
         book_json = self.store.read_book_json(job_id)
         settings = info.settings

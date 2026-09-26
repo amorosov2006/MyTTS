@@ -350,6 +350,10 @@ def create_app(services: Optional[Services] = None, worker: Optional[TTSWorker] 
     async def cancel_job(job_id: str):
         return scheduler.cancel_job(job_id).model_dump(mode="json")
 
+    @app.post("/api/jobs/{job_id}/duplicate", status_code=201)
+    async def duplicate_job(job_id: str):
+        return scheduler.duplicate_job(job_id).model_dump(mode="json")
+
     @app.post("/api/jobs/{job_id}/reveal", status_code=204)
     async def reveal_job(job_id: str):
         info = scheduler.get_job(job_id)

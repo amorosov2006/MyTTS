@@ -251,3 +251,18 @@ async def test_chapter_progress_counters(running_scheduler, sample_book_txt):
     for c in sch.get_job(info.id).chapters:
         if c.include and c.segments_total:
             assert c.segments_done == c.segments_total
+
+
+async def test_duplicate_job_for_convert_again(running_scheduler, sample_book_txt):
+    sch = running_scheduler
+    info = await sch.create_job(sample_book_txt, "sample_book.txt")
+    sch.update_chapters(info.id, [{"index": 0, "include": False, "title": "Пролог"}])
+    await sch.start_job(info.id)
+    await _wait_for(lambda: sch.get_job(info.id).status == JobStatus.done, timeout=10)
+    dup = sch.duplicate_job(info.id)
+    assert dup.id != info.id and dup.status == JobStatus.parsed
+    assert dup.chapters[0].include is False and dup.chapters[0].title == "Пролог"
+    assert (await sch.create_sample(info.id, SampleRequest(seconds=10))).job_id == info.id  # done jobs can sample
+    await sch.start_job(dup.id)
+    await _wait_for(lambda: sch.get_job(dup.id).status == JobStatus.done, timeout=10)
+    assert sch.get_job(dup.id).output_path != sch.get_job(info.id).output_path

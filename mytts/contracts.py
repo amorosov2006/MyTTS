@@ -77,7 +77,11 @@ class Segment(BaseModel):
 #   def detect_lang(text: str) -> Lang
 #   def normalize(text: str, lang: Lang) -> str                  numbers, abbreviations, ё, symbols
 #   def prepare_chapter(chapter: Chapter, lang: Lang, *, read_title: bool = True,
-#                       skip_footnotes: bool = True) -> list[Segment]
+#                       skip_footnotes: bool = True,
+#                       pause_sentence_ms: int = config.PAUSE_SENTENCE_MS,
+#                       pause_paragraph_ms: int = config.PAUSE_PARAGRAPH_MS) -> list[Segment]
+#        Paragraphs detected as the other language get that Segment.lang (mixed-language books).
+#        Title segment (is_title=True) gets config.PAUSE_CHAPTER_TITLE_MS.
 #   def compare_form(text: str, lang: Lang) -> str               canonical form for QA scoring:
 #        lowercase, ё->е, digits -> words, punctuation stripped, whitespace collapsed.
 #        Applied to BOTH the source text and the ASR transcript.

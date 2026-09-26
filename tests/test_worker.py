@@ -108,7 +108,10 @@ async def test_process_worker_memory_cap_kill_then_restart(voice_ru, tmp_path):
                 break
             await asyncio.sleep(0.1)
         assert worker.status().state == "idle"
-        assert worker.status().restarts >= 1
+        await asyncio.sleep(0.5)  # a buggy double-restart would show up here
+        assert worker.status().restarts == 1
+        supervisors = [t for t in asyncio.all_tasks() if "_supervise" in repr(t.get_coro())]
+        assert len(supervisors) == 1
 
         items = _items(["Привет, мир."], tmp_path)
         results = await worker.synthesize(items, voice_ru, SynthesisParams(), qa=False)

@@ -96,7 +96,7 @@ class QwenEngine:
             audio = (np.concatenate(chunks[i]).astype(np.float32) if chunks[i]
                      else np.zeros(0, dtype=np.float32))
             outputs.append(EngineOutput(audio=audio, tokens=token_counts[i],
-                                         hit_token_cap=token_counts[i] >= max_budget - 1))
+                                         hit_token_cap=token_counts[i] >= budgets[i] - 1))
         return outputs
 
 
@@ -124,6 +124,7 @@ class VoiceDesigner:
 
     def generate_voice_design(self, text: str, instruct: str, language: str) -> np.ndarray:
         assert self._model is not None, "load() first"
+        language = {"ru": "russian", "en": "english"}.get(language, language)
         results = list(self._model.generate_voice_design(text=text, instruct=instruct, language=language))
         audio = (np.concatenate([np.array(r.audio) for r in results]).astype(np.float32)
                  if results else np.zeros(0, dtype=np.float32))

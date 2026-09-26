@@ -268,6 +268,7 @@ class ProcessWorker:
         self._restarts = 0
         self._message: Optional[str] = None
         self._starting_lock = asyncio.Lock()
+        self._gen = 0  # incremented per child process; stale supervisors/calls compare against it
 
     # ------------------------------------------------------------------- status
 
@@ -301,7 +302,11 @@ class ProcessWorker:
             self._conn = parent_conn
             self._footprint_gb = 0.0
             self._state = "idle"
-            self._supervisor_task = asyncio.create_task(self._supervise())
+            self._gen += 1
+            old = self._supervisor_task
+            if old is not None and old is not asyncio.current_task():
+                old.cancel()
+            self._supervisor_task = asyncio.create_task(self._supervise(self._gen))
 
     def _kill(self) -> None:
         if self._proc is not None:
@@ -353,12 +358,12 @@ class ProcessWorker:
             self._state = "failed"
             self._message = str(e)
 
-    async def _supervise(self) -> None:
+    async def _supervise(self, gen: int) -> None:
         try:
             while True:
                 await asyncio.sleep(self.poll_interval_s)
                 proc = self._proc
-                if proc is None:
+                if proc is None or gen != self._gen:
                     return
                 if not proc.is_alive():
                     if self._state not in ("restarting", "stopped", "failed"):
@@ -388,16 +393,20 @@ class ProcessWorker:
             if self._proc is None or not self._proc.is_alive():
                 raise WorkerCrashed("worker not running")
             self._state = "busy"
+            gen = self._gen
             try:
                 resp = await asyncio.wait_for(
                     asyncio.to_thread(self._send_recv, req), timeout=self.call_timeout_s)
             except asyncio.TimeoutError:
-                await self._crash(f"call timed out after {self.call_timeout_s}s")
+                if gen == self._gen:
+                    await self._crash(f"call timed out after {self.call_timeout_s}s")
                 raise WorkerCrashed(f"call timed out after {self.call_timeout_s}s")
             except (EOFError, OSError, BrokenPipeError) as e:
-                if self._state != "restarting":
+                # The supervisor may already have killed and restarted the child (gen changed):
+                # don't kill the fresh one.
+                if gen == self._gen and self._state != "restarting":
                     await self._crash(f"worker connection lost: {e}")
-                raise WorkerCrashed(f"worker connection lost: {e}")
+                raise WorkerCrashed(self._message or f"worker connection lost: {e}")
 
             if self._state == "busy":
                 self._state = "idle"

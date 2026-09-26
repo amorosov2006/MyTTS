@@ -115,6 +115,7 @@ export const pauseJob = (jobId: string) => request<JobInfo>(`/jobs/${jobId}/paus
 export const resumeJob = (jobId: string) => request<JobInfo>(`/jobs/${jobId}/resume`, { method: "POST" });
 export const cancelJob = (jobId: string) => request<JobInfo>(`/jobs/${jobId}/cancel`, { method: "POST" });
 export const revealJob = (jobId: string) => request<void>(`/jobs/${jobId}/reveal`, { method: "POST" });
+export const duplicateJob = (jobId: string) => request<JobInfo>(`/jobs/${jobId}/duplicate`, { method: "POST" });
 
 export const segmentAudioUrl = (jobId: string, segmentId: string) => `/api/jobs/${jobId}/segments/${segmentId}/audio`;
 export const chapterAudioUrl = (jobId: string, index: number) => `/api/jobs/${jobId}/chapters/${index}/audio`;

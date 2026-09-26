@@ -87,6 +87,15 @@
 </script>
 
 <div class="max-w-4xl mx-auto p-6 space-y-8">
+  {#if job.status === "done" || job.status === "cancelled"}
+    <div class="rounded-xl border border-border bg-surface px-4 py-3 text-sm text-muted">
+      This book is finished, so its settings are locked. Use <strong>Convert again</strong> on the Convert step to render it with another voice or style.
+    </div>
+  {:else if !editable}
+    <div class="rounded-xl border border-border bg-surface px-4 py-3 text-sm text-muted">
+      Settings are locked while converting — pause the job to change them.
+    </div>
+  {/if}
   <fieldset disabled={!editable} class="space-y-8" class:opacity-60={!editable}>
     <section>
       <div class="flex items-center justify-between flex-wrap gap-2 mb-3">

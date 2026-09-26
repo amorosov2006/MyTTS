@@ -5,6 +5,7 @@
   import { jobsStore } from "../../stores/jobs.svelte";
   import { toastStore } from "../../stores/toasts.svelte";
   import { playerStore } from "../../stores/player.svelte";
+  import { uiStore } from "../../stores/ui.svelte";
   import Icon from "../../icons/Icon.svelte";
   import Badge from "../Badge.svelte";
   import { formatClock, formatHours } from "../../format";
@@ -13,6 +14,21 @@
 
   let busy = $state(false);
   let revealing = $state(false);
+
+  async function convertAgain() {
+    busy = true;
+    try {
+      const copy = await api.duplicateJob(job.id);
+      jobsStore.upsert(copy);
+      jobsStore.select(copy.id);
+      uiStore.setStep(copy.id, "voice");
+      toastStore.success("Copied — pick a new voice or style, then convert.");
+    } catch (err: any) {
+      toastStore.error(err.detail || "Could not copy the job.");
+    } finally {
+      busy = false;
+    }
+  }
 
   const overallFraction = $derived(job.progress.segments_total > 0 ? job.progress.segments_done / job.progress.segments_total : 0);
 
@@ -156,6 +172,13 @@
       {/if}
       {#if job.status === "done"}
         <div class="mt-2 text-sm text-success flex items-center gap-1.5"><Icon name="check-circle" size={14} /> Conversion complete — {formatHours(job.progress.audio_s)} of audio.</div>
+      {/if}
+      {#if job.status === "done" || job.status === "cancelled"}
+        <button
+          class="mt-3 rounded-lg border border-border px-3 py-1.5 text-sm hover:border-accent hover:text-accent"
+          onclick={convertAgain}
+          disabled={busy}
+        >Convert again with different settings…</button>
       {/if}
     </div>
   {/if}

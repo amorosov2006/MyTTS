@@ -731,6 +731,20 @@ const server = http.createServer(async (req, res) => {
       return sendFile(res, seg.refPath, seg.mime || "audio/wav", req);
     }
 
+    // -------- convert again (duplicate)
+    if (method === "POST" && (m = /^\/api\/jobs\/([^/]+)\/duplicate$/.exec(p))) {
+      const src = jobs.get(m[1]);
+      if (!src) return sendJson(res, 404, { detail: "job not found" });
+      const id = "job_" + Math.random().toString(36).slice(2, 10);
+      const copy = JSON.parse(JSON.stringify(src));
+      Object.assign(copy, { id, status: "parsed", created_at: Date.now() / 1000, output_path: null,
+        error: null, sample_approved: false,
+        progress: { segments_total: 0, segments_done: 0, audio_s: 0, elapsed_s: 0, eta_s: null, x_realtime: null } });
+      copy.chapters = copy.chapters.map((c) => ({ ...c, status: "pending", segments_total: 0, segments_done: 0, audio_url: null, duration_s: 0 }));
+      jobs.set(id, copy);
+      return sendJson(res, 201, copy);
+    }
+
     // -------- reveal in Finder
     if (method === "POST" && (m = /^\/api\/jobs\/([^/]+)\/reveal$/.exec(p))) {
       const job = jobs.get(m[1]);

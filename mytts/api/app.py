@@ -261,7 +261,7 @@ def create_app(services: Optional[Services] = None, worker: Optional[TTSWorker] 
 
     @app.delete("/api/jobs/{job_id}", status_code=204)
     async def delete_job(job_id: str):
-        scheduler.delete_job(job_id)
+        await scheduler.delete_job(job_id)
         return Response(status_code=204)
 
     @app.get("/api/jobs/{job_id}/cover")
@@ -352,7 +352,7 @@ def create_app(services: Optional[Services] = None, worker: Optional[TTSWorker] 
 
     @app.post("/api/jobs/{job_id}/duplicate", status_code=201)
     async def duplicate_job(job_id: str):
-        return scheduler.duplicate_job(job_id).model_dump(mode="json")
+        return (await scheduler.duplicate_job(job_id)).model_dump(mode="json")
 
     @app.post("/api/jobs/{job_id}/reveal", status_code=204)
     async def reveal_job(job_id: str):

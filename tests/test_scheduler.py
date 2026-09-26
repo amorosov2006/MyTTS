@@ -259,10 +259,81 @@ async def test_duplicate_job_for_convert_again(running_scheduler, sample_book_tx
     sch.update_chapters(info.id, [{"index": 0, "include": False, "title": "Пролог"}])
     await sch.start_job(info.id)
     await _wait_for(lambda: sch.get_job(info.id).status == JobStatus.done, timeout=10)
-    dup = sch.duplicate_job(info.id)
+    dup = await sch.duplicate_job(info.id)
     assert dup.id != info.id and dup.status == JobStatus.parsed
     assert dup.chapters[0].include is False and dup.chapters[0].title == "Пролог"
     assert (await sch.create_sample(info.id, SampleRequest(seconds=10))).job_id == info.id  # done jobs can sample
     await sch.start_job(dup.id)
     await _wait_for(lambda: sch.get_job(dup.id).status == JobStatus.done, timeout=10)
     assert sch.get_job(dup.id).output_path != sch.get_job(info.id).output_path
+
+
+# ---- regressions from the code review ------------------------------------------------------
+
+async def test_empty_sample_text_is_rejected(running_scheduler, sample_book_txt):
+    sch = running_scheduler
+    info = await sch.create_job(sample_book_txt, "sample_book.txt")
+    sch.services.prepare_chapter = lambda *a, **k: []  # e.g. text "..." (real prepare_chapter)
+    with pytest.raises(ConflictError):
+        await sch.create_sample(info.id, SampleRequest(text="..."))
+
+
+async def test_double_start_is_rejected(running_scheduler, sample_book_txt):
+    sch = running_scheduler
+    info = await sch.create_job(sample_book_txt, "sample_book.txt")
+    results = await asyncio.gather(sch.start_job(info.id), sch.start_job(info.id),
+                                   return_exceptions=True)
+    assert sum(isinstance(r, ConflictError) for r in results) == 1
+    await _wait_for(lambda: sch.get_job(info.id).status == JobStatus.done, timeout=10)
+    totals = sch.store.job_segment_totals(info.id)
+    assert sum(len(b) for b in sch.worker.synthesize_batches) == totals.get("done", 0)
+
+
+async def test_pause_resume_does_not_resynthesize_in_flight(scheduler_factory, sample_book_txt):
+    sch = scheduler_factory(FakeWorker(delay=0.3))
+    await sch.start()
+    try:
+        info = await sch.create_job(sample_book_txt, "sample_book.txt")
+        await sch.start_job(info.id)
+        await _wait_for(lambda: sch.worker.calls >= 1, timeout=5)
+        sch.pause_job(info.id)
+        sch.resume_job(info.id)  # immediately, while the first batch is still in flight
+        await _wait_for(lambda: sch.get_job(info.id).status == JobStatus.done, timeout=15)
+        ids = [s for b in sch.worker.synthesize_batches for s in b]
+        assert len(ids) == len(set(ids)), "a segment was synthesized twice"
+    finally:
+        await sch.stop()
+
+
+async def test_stuck_assembling_chapter_recovers_after_restart(scheduler_factory, sample_book_txt):
+    sch1 = scheduler_factory()
+    await sch1.start()
+    info = await sch1.create_job(sample_book_txt, "sample_book.txt")
+    await sch1.start_job(info.id)
+    await _wait_for(lambda: sch1.get_job(info.id).status == JobStatus.done, timeout=10)
+    await sch1.stop()
+    # simulate a crash during assembly of chapter 1: state says "assembling", job still running
+    first = next(c for c in sch1.get_job(info.id).chapters if c.include and c.segments_total)
+    sch1.store.update_chapter_state(info.id, first.index, status="assembling")
+    sch1.store.update_job(info.id, status=JobStatus.running)
+
+    sch2 = scheduler_factory()
+    await sch2.start()
+    try:
+        assert sch2.get_job(info.id).status == JobStatus.paused
+        sch2.resume_job(info.id)
+        await _wait_for(lambda: sch2.get_job(info.id).status == JobStatus.done, timeout=10)
+        assert next(c for c in sch2.get_job(info.id).chapters if c.index == first.index).status == "done"
+    finally:
+        await sch2.stop()
+
+
+async def test_stop_is_bounded_even_during_a_long_batch(scheduler_factory, sample_book_txt):
+    sch = scheduler_factory(FakeWorker(delay=30))
+    await sch.start()
+    info = await sch.create_job(sample_book_txt, "sample_book.txt")
+    await sch.start_job(info.id)
+    await _wait_for(lambda: sch.worker.calls >= 1, timeout=5)
+    t0 = asyncio.get_running_loop().time()
+    await sch.stop(timeout_s=0.5)
+    assert asyncio.get_running_loop().time() - t0 < 3

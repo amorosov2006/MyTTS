@@ -88,6 +88,9 @@ class Scheduler:
         self._job_stats: dict[str, dict] = {}
         self._retries: dict[str, int] = {}
         self._finalizing: set[str] = set()
+        self._inflight: set[tuple[str, str]] = set()    # (job_id, segment_id) synth/post-processing
+        self._assembling: set[tuple[str, int]] = set()  # (job_id, chapter) being assembled now
+        self._preparing: set[str] = set()               # jobs inside start_job (double-click guard)
         self._wakeup = asyncio.Event()
         self._task: Optional[asyncio.Task] = None
         self._bg_tasks: set[asyncio.Task] = set()
@@ -101,18 +104,37 @@ class Scheduler:
                 self.store.reset_running_segments(info.id)
                 self.store.update_job(info.id, status=JobStatus.paused,
                                        error="Interrupted — press Resume")
+            self._unstick_chapters(info.id)
+        self.store.reset_running_sample_segments()
         self._stopped = False
         self._task = asyncio.create_task(self._dispatch_loop())
 
-    async def stop(self) -> None:
+    async def stop(self, timeout_s: float = 5.0) -> None:
         self._stopped = True
         self._wakeup.set()
         if self._task is not None:
-            await self._task
+            try:  # the loop may be inside a long synthesize call: don't hang shutdown on it
+                await asyncio.wait_for(asyncio.shield(self._task), timeout_s)
+            except asyncio.TimeoutError:
+                self._task.cancel()
+                await asyncio.gather(self._task, return_exceptions=True)
         if self._bg_tasks:
-            await asyncio.gather(*list(self._bg_tasks), return_exceptions=True)
+            await asyncio.wait(list(self._bg_tasks), timeout=timeout_s)
         if self._owns_executor:
             self._executor.shutdown(wait=True)
+
+    def _unstick_chapters(self, job_id: str) -> None:
+        """A chapter left 'assembling' (app killed mid-assembly) would block its job forever:
+        put it back to 'running' so it is assembled again once its segments are finished."""
+        for c in self.store.get_chapters(job_id):
+            if c.status == "assembling" and (job_id, c.index) not in self._assembling:
+                self.store.update_chapter_state(job_id, c.index, status="running")
+
+    def _reassemble_ready_chapters(self, job_id: str) -> None:
+        settings = self.store.get_job_settings(job_id)
+        for c in self.store.get_chapters(job_id):
+            if c.include and c.status in ("running", "pending") and c.segments_total:
+                self._track_bg(asyncio.ensure_future(self._maybe_finish_chapter(job_id, c.index, settings)))
 
     def _track_bg(self, task: "asyncio.Task") -> None:
         self._bg_tasks.add(task)
@@ -143,18 +165,18 @@ class Scheduler:
         stem = Path(original_filename).stem or "upload"
         tmp_dir = Path(tempfile.mkdtemp(prefix="mytts_upload_"))
         named_path = tmp_dir / f"{stem}{suffix}"
-        shutil.copy(uploaded_file_path, named_path)
+        await asyncio.to_thread(shutil.copy, uploaded_file_path, named_path)
         try:
             book = await asyncio.to_thread(self.services.parse_book, named_path)
             settings = JobSettings()
             if book.lang == Lang.en:
                 settings.voice_id = "en_male"
-            job_id = self.store.create_job(book, settings, named_path)
+            job_id = await asyncio.to_thread(self.store.create_job, book, settings, named_path)
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
         return self.store.get_job_info(job_id)
 
-    def duplicate_job(self, job_id: str) -> JobInfo:
+    async def duplicate_job(self, job_id: str) -> JobInfo:
         """"Convert again": a fresh job (status parsed) with the same book, chapter edits and
         settings, so a finished book can be re-rendered with another voice/style. Its output
         goes to its own folder ("... (2)")."""
@@ -164,7 +186,7 @@ class Scheduler:
             bj["cover"] = base64.b64decode(bj["cover"])
         book = Book.model_validate(bj)
         upload = next(self.store.job_workdir(job_id).glob("upload.*"))
-        new_id_ = self.store.create_job(book, info.settings, upload)
+        new_id_ = await asyncio.to_thread(self.store.create_job, book, info.settings, upload)
         self.store.update_chapters_meta(
             new_id_, [{"index": c.index, "title": c.title, "include": c.include} for c in info.chapters])
         return self.store.get_job_info(new_id_)
@@ -175,10 +197,10 @@ class Scheduler:
     def list_jobs(self) -> list[JobInfo]:
         return self.store.list_jobs()
 
-    def delete_job(self, job_id: str) -> None:
+    async def delete_job(self, job_id: str) -> None:
         self._require_job(job_id)
         self._run_queue = [j for j in self._run_queue if j != job_id]
-        self.store.delete_job(job_id)
+        await asyncio.to_thread(self.store.delete_job, job_id)
 
     def update_chapters(self, job_id: str, updates: list[dict]) -> JobInfo:
         info = self._require_job(job_id)
@@ -201,8 +223,15 @@ class Scheduler:
 
     async def start_job(self, job_id: str) -> JobInfo:
         info = self._require_job(job_id)
-        if info.status != JobStatus.parsed:
+        if info.status != JobStatus.parsed or job_id in self._preparing:
             raise ConflictError(f"cannot start a job in status {info.status.value}")
+        self._preparing.add(job_id)
+        try:
+            return await self._start_job(job_id, info)
+        finally:
+            self._preparing.discard(job_id)
+
+    async def _start_job(self, job_id: str, info: JobInfo) -> JobInfo:
         book_json = self.store.read_book_json(job_id)
         book_lang = Lang(book_json["lang"]) if book_json.get("lang") else None
         for cm in self.store.get_chapters(job_id):
@@ -248,7 +277,10 @@ class Scheduler:
         info = self._require_job(job_id)
         if info.status != JobStatus.paused:
             raise ConflictError(f"cannot resume a job in status {info.status.value}")
-        self.store.reset_running_segments(job_id)
+        self.store.reset_running_segments(
+            job_id, exclude=frozenset(s for j, s in self._inflight if j == job_id))
+        self._unstick_chapters(job_id)
+        self._reassemble_ready_chapters(job_id)
         self.store.update_job(job_id, status=JobStatus.queued, error=None)
         self._job_stats.setdefault(job_id, {"started_at": time.monotonic(), "busy_s": 0.0})
         if job_id not in self._run_queue:
@@ -311,6 +343,8 @@ class Scheduler:
             skip_footnotes=settings.skip_footnotes, pause_sentence_ms=settings.pause_sentence_ms,
             pause_paragraph_ms=settings.pause_paragraph_ms,
         )
+        if not segments:
+            raise ConflictError("Nothing to read in the sample text")
         sid = new_id("smp")
         segments = [s.model_copy(update={"id": f"{sid}-{i:04d}"}) for i, s in enumerate(segments)]
         text = "\n\n".join(paragraphs)
@@ -396,6 +430,7 @@ class Scheduler:
             return
         for r in rows:
             self.store.mark_segment_running(job_id, r["id"])
+            self._inflight.add((job_id, r["id"]))
         items = [
             SynthesisItem(segment_id=r["id"], text=r["text"], lang=Lang(r["lang"]),
                           out_wav=str(self.store.raw_wav_path(job_id, r["id"])))
@@ -408,6 +443,7 @@ class Scheduler:
         except WorkerCrashed:
             for r in rows:
                 self.store.mark_segment_pending(job_id, r["id"])
+                self._inflight.discard((job_id, r["id"]))
             n = self._retries[job_id] = self._retries.get(job_id, 0) + 1
             if n > MAX_BATCH_RETRIES:
                 self._retries.pop(job_id, None)
@@ -420,6 +456,7 @@ class Scheduler:
             log.exception("synthesis failed")
             for r in rows:
                 self.store.mark_segment_pending(job_id, r["id"])
+                self._inflight.discard((job_id, r["id"]))
             self._pause_job_with_error(job_id, f"TTS error: {e}")
             return
         self._retries.pop(job_id, None)
@@ -437,6 +474,15 @@ class Scheduler:
 
     async def _post_process(self, job_id: str, seg_row, result: SynthesisResult,
                              settings: JobSettings) -> None:
+        try:
+            await self._post_process_inner(job_id, seg_row, result, settings)
+        finally:
+            self._inflight.discard((job_id, seg_row["id"]))
+
+    async def _post_process_inner(self, job_id: str, seg_row, result: SynthesisResult,
+                                  settings: JobSettings) -> None:
+        if not self.store.job_exists(job_id):  # deleted while in flight
+            return
         if not result.ok:
             self.store.mark_segment_failed(job_id, seg_row["id"], result.error or "synthesis failed")
             self._log(job_id, "warning", f"segment {seg_row['id']} failed: {result.error}")
@@ -455,6 +501,8 @@ class Scheduler:
                 self._update_chapter_progress(job_id, seg_row["chapter"])
                 self._update_progress(job_id)
                 await self._maybe_finish_chapter(job_id, seg_row["chapter"], settings)
+                return
+            if not self.store.job_exists(job_id):
                 return
             self.store.mark_segment_done(job_id, seg_row["id"], str(out_wav), duration, result.cer,
                                           result.transcript, result.attempts)
@@ -503,6 +551,26 @@ class Scheduler:
         return int(self.store.job_audio_seconds(job_id) * FALLBACK_CHARS_PER_S)
 
     async def _maybe_finish_chapter(self, job_id: str, chapter: int, settings: JobSettings) -> None:
+        """Assemble the chapter once all its segments are finished. Any failure (e.g. output
+        folder on an unplugged drive) marks the chapter failed instead of leaving it
+        'assembling', which would block the job and the whole queue."""
+        if (job_id, chapter) in self._assembling or not self.store.job_exists(job_id):
+            return
+        self._assembling.add((job_id, chapter))
+        try:
+            await self._finish_chapter(job_id, chapter, settings)
+        except Exception as e:
+            log.exception("finishing chapter failed")
+            if self.store.job_exists(job_id) and any(
+                    c.index == chapter and c.status == "assembling" for c in self.store.get_chapters(job_id)):
+                self.store.update_chapter_state(job_id, chapter, status="failed")
+                self._log(job_id, "error", f"chapter could not be finished: {e}")
+                self._publish_job(job_id, force=True)
+                await self._maybe_finish_job(job_id)
+        finally:
+            self._assembling.discard((job_id, chapter))
+
+    async def _finish_chapter(self, job_id: str, chapter: int, settings: JobSettings) -> None:
         counts = self.store.chapter_segment_counts(job_id, chapter)
         if sum(counts.values()) == 0 or counts.get("pending", 0) or counts.get("running", 0):
             return

@@ -458,12 +458,16 @@ class Store:
             ).fetchone()
         return int(row["n"])
 
-    def reset_running_segments(self, job_id: str) -> None:
-        """After a crash/restart: work that was in flight is lost, so re-queue it."""
+    def reset_running_segments(self, job_id: str, exclude: frozenset = frozenset()) -> None:
+        """After a crash/restart: work that was in flight is lost, so re-queue it. `exclude`:
+        segments still genuinely in flight in this process (pause→resume) must not be redone."""
         with self._lock, self._conn:
-            self._conn.execute(
-                "UPDATE segments SET status='pending' WHERE job_id=? AND status='running'", (job_id,)
-            )
+            rows = self._conn.execute(
+                "SELECT id FROM segments WHERE job_id=? AND status='running'", (job_id,)).fetchall()
+            for r in rows:
+                if r["id"] not in exclude:
+                    self._conn.execute("UPDATE segments SET status='pending' WHERE job_id=? AND id=?",
+                                       (job_id, r["id"]))
             self._conn.execute(
                 "UPDATE sample_segments SET status='pending' WHERE job_id=? AND status='running'",
                 (job_id,),
@@ -554,6 +558,13 @@ class Store:
         d = self.job_workdir(job_id) / "samples" / sample_id
         d.mkdir(parents=True, exist_ok=True)
         return d / "sample.mp3"
+
+    def reset_running_sample_segments(self) -> None:
+        """At startup: sample segments left 'running' by a crash go back to pending."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE sample_segments SET status='pending' WHERE status='running' AND sample_id IN"
+                " (SELECT id FROM samples WHERE status IN ('queued','running'))")
 
     def oldest_pending_sample(self) -> Optional[sqlite3.Row]:
         """The oldest sample (any job) that still has pending segment work."""

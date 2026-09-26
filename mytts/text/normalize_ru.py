@@ -24,16 +24,23 @@ more specific one (a date, a year, a money amount...) already handled:
   17. whitespace collapse
 
 Known gaps (documented, not fixed here — see the module's final report too):
-  - Bare cardinals default to masculine nominative. A number ending in 1 or 2
-    before a grammatically feminine noun ("2 книги") is read with the wrong
-    gender ("два" instead of "две") unless it's one of the units this module
-    itself spells out (money, percent, тыс./млн/млрд). Fixing this in general
-    needs a noun-gender lexicon.
-  - Abbreviation expansions (ул., кв., им., "д." -> дом) substitute a fixed
-    base form; they don't re-decline to match the surrounding sentence case
-    ("на ул. Садовой" -> "на улица Садовой", not "на улице Садовой").
-  - "г."/"гг."/"в."/"вв." left over after the number-aware passes fall back to
-    a best guess (год/годы/век/века) rather than true disambiguation.
+  - Bare cardinals ending in 1 or 2 (not 11/12) get a gender guess from the
+    ENDING of the word right after them (_gender_from_next_word: -а/-я/-ы/-и
+    -> feminine, -о/-е -> neuter, else masculine — no lexicon, see that
+    function's docstring). This covers the common cases ("2 книги" -> "две
+    книги") but isn't real morphology: a borrowed or irregular noun whose
+    ending doesn't match its actual gender can still get the wrong form.
+    Cardinals ending in 3-9 have only one form regardless of gender, so this
+    doesn't apply to them.
+  - Abbreviation expansions (ул., кв., "д." -> дом) re-decline to match a
+    directly-preceding preposition from a small table (на ул. -> на улице,
+    у д. -> у дома, etc. -- see _PREP_ABBREV_CASE), but only for the
+    combinations in that table. Without a recognized preposition right in
+    front (e.g. "ул. Садовой," after a comma) they still substitute a fixed
+    base form ("улица", not case-agreed).
+  - "г."/"гг."/"в."/"вв." left over after the number-aware and preposition-
+    aware passes fall back to a best guess (год/годы/век/века) rather than
+    true disambiguation.
   - Decimal reading only handles 1-2 fractional digits (десятых/сотых); more
     digits fall back to "тысячных" digit-by-digit still as one cardinal.
 """
@@ -340,6 +347,7 @@ def _replace_ordinal_digits(text: str) -> str:
 
 _THOUSANDS_SEP_RE = re.compile(r"(?<=\d)[  ](?=\d{3}\b)")
 _BARE_NUMBER_RE = re.compile(r"\d+")
+_NEXT_WORD_RE = re.compile(r"\s*([A-Za-zА-яЁё]+)")
 
 
 def _collapse_thousands_seps(text: str) -> str:
@@ -350,8 +358,44 @@ def _collapse_thousands_seps(text: str) -> str:
     return text
 
 
+def _gender_from_next_word(text: str, pos: int, *, digit_is_one: bool) -> str:
+    """Heuristic gender guess for a number ending in 1 or 2 (not 11/12), read
+    off the ending of the noun the ORIGINAL author already wrote right after
+    it -- no lexicon, just the ending. Russian marks gender on the number
+    itself here (один/одна/одно, два/две), unlike 3+ which have one form.
+
+    For "1 X": X is nominative singular, so its own gender ending shows
+    directly (книга/окно/дом). For "2 X": X is genitive singular, which
+    for masculine and neuter nouns end in -а/-я (дома, окна) and for
+    feminine nouns end in -ы/-и (книги, минуты).
+    """
+    m = _NEXT_WORD_RE.match(text, pos)
+    if not m:
+        return "m"
+    last = m.group(1)[-1].lower()
+    if digit_is_one:
+        if last in "ая":
+            return "f"
+        if last in "ое":
+            return "n"
+        return "m"  # consonant, -й, soft sign, or unknown: default masculine
+    if last in "ыи":
+        return "f"
+    return "m"  # -а/-я (masc/neut genitive singular) or unknown: default masculine
+
+
 def _replace_bare_cardinals(text: str) -> str:
-    return _BARE_NUMBER_RE.sub(lambda m: num.ru_cardinal(int(m.group(0))), text)
+    def sub(m: re.Match) -> str:
+        n = int(m.group(0))
+        last, last_two = n % 10, n % 100
+        gender = "m"
+        if last == 1 and last_two != 11:
+            gender = _gender_from_next_word(text, m.end(), digit_is_one=True)
+        elif last == 2 and last_two != 12:
+            gender = _gender_from_next_word(text, m.end(), digit_is_one=False)
+        return num.ru_cardinal(n, gender=gender)
+
+    return _BARE_NUMBER_RE.sub(sub, text)
 
 
 # ----------------------------------------------------------------------------- 15. abbreviations
@@ -380,8 +424,49 @@ _LEFTOVER_GG_RE = re.compile(r"\bгг\.", re.IGNORECASE)
 _LEFTOVER_V_RE = re.compile(r"\bв\.", re.IGNORECASE)
 _LEFTOVER_VV_RE = re.compile(r"\bвв\.", re.IGNORECASE)
 
+# Preposition-aware case agreement for abbreviations, applied ONLY when the
+# preposition directly precedes the abbreviation. This runs before the
+# simple, case-agreement-free expansions below (which still handle "ул."/
+# "д." with no recognized preposition in front, e.g. "ул. Садовой," after a
+# comma) -- see the module docstring gap this narrows but doesn't close.
+_PREP_ABBREV_CASE = {
+    ("на", "ул"): "улице",
+    ("по", "ул"): "улице",
+    ("с", "ул"): "улицы",
+    ("со", "ул"): "улицы",
+    ("до", "ул"): "улицы",
+    ("у", "д"): "дома",
+    ("в", "д"): "доме",
+    ("во", "д"): "доме",
+}
+_PREP_ABBREV_RE = re.compile(
+    r"\b(?P<prep>на|по|со|с|до|у|во|в)\s+(?P<abbrev>ул|д)\.",
+    re.IGNORECASE,
+)
+
+# "квартира" is always "в квартире" in real usage, regardless of whether the
+# source wrote "на кв." or "в кв.".
+_KV_PREP_RE = re.compile(r"\b(?:на|в|во)\s+кв\.", re.IGNORECASE)
+
+# "г." as a city name, with the preposition's own case: "в г. Москве" -> "в городе Москве".
+_G_CITY_PREP_RE = re.compile(r"\b(?P<prep>в|во)\s+г\.\s*(?=[А-ЯЁ])", re.IGNORECASE)
+
+
+def _replace_prep_abbrevs(text: str) -> str:
+    def sub(m: re.Match) -> str:
+        noun = _PREP_ABBREV_CASE.get((m.group("prep").lower(), m.group("abbrev").lower()))
+        if noun is None:
+            return m.group(0)
+        return f"{m.group('prep')} {noun}"
+
+    text = _PREP_ABBREV_RE.sub(sub, text)
+    text = _KV_PREP_RE.sub(lambda m: _match_case(m.group(0), "в квартире"), text)
+    text = _G_CITY_PREP_RE.sub(lambda m: f"{m.group('prep')} городе ", text)
+    return text
+
 
 def _replace_abbreviations(text: str) -> str:
+    text = _replace_prep_abbrevs(text)
     text = _DOM_BEFORE_NUMBER_RE.sub(lambda m: _match_case(m.group(0), "дом "), text)
     text = _GOROD_RE.sub(lambda m: _match_case(m.group(0), "город "), text)
     for pattern, replacement in _SIMPLE_ABBREV_RES:

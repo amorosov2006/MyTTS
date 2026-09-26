@@ -34,6 +34,17 @@ _STEM_PAIRS: list[tuple[str, str]] = [
 _ADJ_ENDINGS = ["ый", "ого", "ому", "ым", "ом", "ая", "ой", "ую", "ое",
                 "ые", "ых", "ыми", "енький", "енькая", "енькое", ""]
 
+# Patronymics (Семёнович/Семёновна, Фёдорович/Фёдоровна, Артёмович/Артёмовна):
+# stem = the first name itself, unambiguous ("-ович"/"-овна" isn't a real word
+# on its own), so the full paradigm is safe to restore.
+_PATRONYMIC_PAIRS: list[tuple[str, str]] = [
+    ("семён", "семен"),
+    ("фёдор", "федор"),
+    ("артём", "артем"),
+]
+_PATRONYMIC_ENDINGS = ["ович", "овича", "овичу", "овичем", "овиче",
+                       "овна", "овны", "овне", "овну", "овной"]
+
 # key = е-spelled form as commonly typeset (input), value = correct ё form (output).
 _WHOLE_WORDS: dict[str, str] = {
     # pronouns / particles
@@ -82,14 +93,41 @@ _WHOLE_WORDS: dict[str, str] = {
     "котел": "котёл",
     "жены": "жёны",
     "сестры": "сёстры",
+    # names and patronymics (unambiguous)
+    # Пётр is irregular (a "fleeting vowel" name): the ё only appears in the
+    # nominative -- Петра/Петру/Петром/Петре have NO ё, so ONLY the bare
+    # nominative form is restored here.
+    "петр": "пётр",
+    # Семён/Фёдор/Артём decline regularly and keep ё in every case.
+    "семен": "семён", "семена": "семёна", "семену": "семёну",
+    "семеном": "семёном", "семене": "семёне",
+    "федор": "фёдор", "федора": "фёдора", "федору": "фёдору",
+    "федором": "фёдором", "федоре": "фёдоре",
+    "артем": "артём", "артема": "артёма", "артему": "артёму",
+    "артемом": "артёмом", "артеме": "артёме",
+    "алена": "алёна", "алены": "алёны", "алене": "алёне",
+    "алену": "алёну", "аленой": "алёной",
+    "лева": "лёва", "левы": "лёвы", "леве": "лёве", "леву": "лёву", "левой": "лёвой",
+    # "лени" (genitive of "лень", laziness) is a real, common word -- only
+    # the nominative "Леня" is restored, not the rest of the paradigm.
+    "леня": "лёня",
+    "потемкин": "потёмкин", "потемкина": "потёмкина", "потемкину": "потёмкину",
+    "потемкиным": "потёмкиным", "потемкине": "потёмкине",
+    # "королева" (queen) is a real, common word -- only the nominative
+    # surname "Королёв" is restored, not the rest of the paradigm.
+    "королев": "королёв",
+    "хрущев": "хрущёв", "хрущева": "хрущёва", "хрущеву": "хрущёву",
+    "хрущевым": "хрущёвым", "хрущеве": "хрущёве",
+    "горбачев": "горбачёв", "горбачева": "горбачёва", "горбачеву": "горбачёву",
+    "горбачевым": "горбачёвым", "горбачеве": "горбачёве",
     # NOT restored (ambiguous minimal pairs): все/всё, небо/нёбо.
 }
 
 
-def _build_stem_patterns() -> list[tuple[re.Pattern, str]]:
+def _build_stem_patterns(pairs: list[tuple[str, str]], endings: list[str]) -> list[tuple[re.Pattern, str]]:
     patterns = []
-    for yo_stem, ye_stem in _STEM_PAIRS:
-        for ending in _ADJ_ENDINGS:
+    for yo_stem, ye_stem in pairs:
+        for ending in endings:
             yo_word = yo_stem + ending
             ye_word = ye_stem + ending
             if not ye_word:
@@ -98,7 +136,10 @@ def _build_stem_patterns() -> list[tuple[re.Pattern, str]]:
     return patterns
 
 
-_STEM_PATTERNS = _build_stem_patterns()
+_STEM_PATTERNS = (
+    _build_stem_patterns(_STEM_PAIRS, _ADJ_ENDINGS)
+    + _build_stem_patterns(_PATRONYMIC_PAIRS, _PATRONYMIC_ENDINGS)
+)
 _WORD_RE = re.compile(r"\b[а-яё]+\b", re.IGNORECASE)
 
 

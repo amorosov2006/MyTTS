@@ -32,12 +32,15 @@ Known gaps (documented, not fixed here — see the module's final report too):
     ending doesn't match its actual gender can still get the wrong form.
     Cardinals ending in 3-9 have only one form regardless of gender, so this
     doesn't apply to them.
-  - Abbreviation expansions (ул., кв., "д." -> дом) re-decline to match a
-    directly-preceding preposition from a small table (на ул. -> на улице,
-    у д. -> у дома, etc. -- see _PREP_ABBREV_CASE), but only for the
-    combinations in that table. Without a recognized preposition right in
-    front (e.g. "ул. Садовой," after a comma) they still substitute a fixed
-    base form ("улица", not case-agreed).
+  - Abbreviation expansions (ул., кв., "д." -> дом, г., пр., пл.) re-decline
+    to match a directly-preceding preposition. по/с/со/до/у use a fixed case
+    (_PREP_ABBREV_CASE) since they're never directional. в/на ARE directional,
+    so their case (accusative vs. prepositional) is guessed from the ending
+    of the word right after the abbreviation (_V_NA_ABBREV_NOUNS /
+    _replace_v_na_abbrevs) -- "в г. Москву" (accusative, -у) vs. "в г. Москве"
+    (prepositional). Without a recognized preposition right in front (e.g.
+    "ул. Садовой," after a comma) or a following word to read an ending from
+    (e.g. "в д. 5"), they still substitute a fixed base form.
   - "г."/"гг."/"в."/"вв." left over after the number-aware and preposition-
     aware passes fall back to a best guess (год/годы/век/века) rather than
     true disambiguation.
@@ -429,27 +432,56 @@ _LEFTOVER_VV_RE = re.compile(r"\bвв\.", re.IGNORECASE)
 # simple, case-agreement-free expansions below (which still handle "ул."/
 # "д." with no recognized preposition in front, e.g. "ул. Садовой," after a
 # comma) -- see the module docstring gap this narrows but doesn't close.
+#
+# по/с/со/до/у are not directional, so their case never depends on what
+# follows: "по улице" (dative), "с улицы"/"до улицы" (genitive), "у дома"
+# (genitive) are always the same form.
 _PREP_ABBREV_CASE = {
-    ("на", "ул"): "улице",
     ("по", "ул"): "улице",
     ("с", "ул"): "улицы",
     ("со", "ул"): "улицы",
     ("до", "ул"): "улицы",
     ("у", "д"): "дома",
-    ("в", "д"): "доме",
-    ("во", "д"): "доме",
 }
 _PREP_ABBREV_RE = re.compile(
-    r"\b(?P<prep>на|по|со|с|до|у|во|в)\s+(?P<abbrev>ул|д)\.",
+    r"\b(?P<prep>по|со|с|до|у)\s+(?P<abbrev>ул|д)\.",
     re.IGNORECASE,
 )
 
-# "квартира" is always "в квартире" in real usage, regardless of whether the
-# source wrote "на кв." or "в кв.".
-_KV_PREP_RE = re.compile(r"\b(?:на|в|во)\s+кв\.", re.IGNORECASE)
+# в/на ARE directional: "в город" (accusative, going there) vs. "в городе"
+# (prepositional, being there). Real Russian text already marks this on the
+# NEXT word ("в город Москву" vs. "в городе Москве"), so peek at its ending
+# to pick the case: -у/-ю (which also covers -ую/-юю) -> accusative, anything
+# else (including no word at all, e.g. a house/flat number) -> prepositional.
+# квартира is always "в", regardless of whether the source wrote "на кв." or
+# "в кв." -- real usage never says "на квартиру/квартире".
+_V_NA_ABBREV_NOUNS = {
+    "г": {"acc": "город", "prep": "городе"},
+    "ул": {"acc": "улицу", "prep": "улице"},
+    "д": {"acc": "дом", "prep": "доме"},
+    "кв": {"acc": "квартиру", "prep": "квартире", "force_prep": "в"},
+    "пр": {"acc": "проспект", "prep": "проспекте"},
+    "пл": {"acc": "площадь", "prep": "площади"},
+}
+_V_NA_ABBREV_RE = re.compile(
+    r"\b(?P<prep>в|во|на)\s+(?P<abbrev>г|ул|д|кв|пр|пл)\.\s*",
+    re.IGNORECASE,
+)
+_ACCUSATIVE_ENDING = ("у", "ю")
 
-# "г." as a city name, with the preposition's own case: "в г. Москве" -> "в городе Москве".
-_G_CITY_PREP_RE = re.compile(r"\b(?P<prep>в|во)\s+г\.\s*(?=[А-ЯЁ])", re.IGNORECASE)
+
+def _replace_v_na_abbrevs(text: str) -> str:
+    def sub(m: re.Match) -> str:
+        info = _V_NA_ABBREV_NOUNS.get(m.group("abbrev").lower())
+        if info is None:
+            return m.group(0)
+        word_m = _NEXT_WORD_RE.match(text, m.end())
+        accusative = bool(word_m and word_m.group(1)[-1].lower() in _ACCUSATIVE_ENDING)
+        noun = info["acc"] if accusative else info["prep"]
+        prep = info.get("force_prep", m.group("prep"))
+        return _match_case(m.group(0), f"{prep} {noun} ")
+
+    return _V_NA_ABBREV_RE.sub(sub, text)
 
 
 def _replace_prep_abbrevs(text: str) -> str:
@@ -459,9 +491,8 @@ def _replace_prep_abbrevs(text: str) -> str:
             return m.group(0)
         return f"{m.group('prep')} {noun}"
 
+    text = _replace_v_na_abbrevs(text)
     text = _PREP_ABBREV_RE.sub(sub, text)
-    text = _KV_PREP_RE.sub(lambda m: _match_case(m.group(0), "в квартире"), text)
-    text = _G_CITY_PREP_RE.sub(lambda m: f"{m.group('prep')} городе ", text)
     return text
 
 

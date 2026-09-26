@@ -1,0 +1,19 @@
+# Foreword
+
+This is a short foreword paragraph. It has two sentences.
+%%CHAPTER%%
+# The Beginning
+
+It was a quiet morning. The station was empty.
+
+A single train waited on the far platform. Its lights were still on.
+%%CHAPTER%%
+# The Middle
+
+Nothing much happened here for a while. Then something did.
+
+It rained for three days straight. People stayed inside and read books.
+%%CHAPTER%%
+# The End
+
+At last the train departed. The platform was quiet again.

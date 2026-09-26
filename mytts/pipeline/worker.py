@@ -242,7 +242,10 @@ def _child_main(conn, engine_name: str) -> None:
                     duration = _write_wav(req["out_wav"], audio, designer.sample_rate)
                     conn.send({"ok": True, "result": duration})
                 elif op == "test_alloc":
-                    leaks.append(bytearray(int(req["gb"] * (1 << 30))))
+                    buf = bytearray(int(req["gb"] * (1 << 30)))
+                    buf[::4096] = b"\x01" * len(range(0, len(buf), 4096))  # touch pages: real footprint
+                    leaks.append(buf)
+                    time.sleep(req.get("hold_s", 3.0))  # like a runaway generation, still busy
                     conn.send({"ok": True, "result": None})
                 elif op == "test_sleep":
                     time.sleep(req["seconds"])

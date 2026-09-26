@@ -1,6 +1,6 @@
 # MyTTS — Offline Book → Audiobook Converter
 
-Status: **Phase 0 done — waiting for the user to pick voices (bench/out/listen.html)**.
+Status: **Phase 3 (integration) — end-to-end verified on the real model; review + UI polish in progress**.
 
 ## 1. Target machine (measured 2026-09-25)
 

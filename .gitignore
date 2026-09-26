@@ -5,3 +5,6 @@ __pycache__/
 node_modules/
 bench/out/
 .DS_Store
+.claude/worktrees/
+mytts/static/*
+!mytts/static/.gitkeep

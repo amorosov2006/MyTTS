@@ -1,0 +1,9 @@
+{
+  "id": "en_female",
+  "name": "English · female — warm American narrator",
+  "lang": "en",
+  "gender": "female",
+  "ref_text": "Hello. My name is Alex, and today I will be reading this book for you. Make yourself comfortable, and let us begin.",
+  "description": "A warm, gentle adult female narrator with a clear, pleasant mid-range voice. Native American English speaker, calm even pace, professional audiobook reading.",
+  "builtin": true
+}

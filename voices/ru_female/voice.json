@@ -1,0 +1,9 @@
+{
+  "id": "ru_female",
+  "name": "Русский · женский — мягкий, тёплый",
+  "lang": "ru",
+  "gender": "female",
+  "ref_text": "Здравствуйте. Меня зовут Алексей, и сегодня я прочитаю для вас эту книгу. Устраивайтесь поудобнее, мы начинаем.",
+  "description": "A warm, gentle adult female narrator with a soft, clear mid-range voice. Native Russian speaker, clear standard pronunciation, calm even pace, professional audiobook reading.",
+  "builtin": true
+}

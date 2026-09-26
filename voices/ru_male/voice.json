@@ -1,0 +1,9 @@
+{
+  "id": "ru_male",
+  "name": "Русский · мужской — бархатный баритон",
+  "lang": "ru",
+  "gender": "male",
+  "ref_text": "Здравствуйте. Меня зовут Алексей, и сегодня я прочитаю для вас эту книгу. Устраивайтесь поудобнее, мы начинаем.",
+  "description": "A calm, warm, mature male narrator with a low, velvety baritone. Native Russian speaker, clear standard Moscow pronunciation, measured unhurried pace, professional audiobook reading.",
+  "builtin": true
+}

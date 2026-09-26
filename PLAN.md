@@ -1,6 +1,6 @@
 # MyTTS — Offline Book → Audiobook Converter
 
-Status: **Phase 3 (integration) — end-to-end verified on the real model; review + UI polish in progress**.
+Status: **v0.1 complete (2026-09-25)** — all phases done; see §10 for final verification.
 
 ## 1. Target machine (measured 2026-09-25)
 
@@ -236,3 +236,45 @@ The UI flow is **Parse → Review chapters → Choose voice → ▶ Render sampl
 - **API:** `POST /jobs/{id}/sample {chapter?, offset?, seconds?, text?}` returns a sample id.
 - **Delivery:** the audio is streamed over SSE and played in the same player.
 - **Storage:** samples are kept under `<output>/.samples/`, so the user can A/B-compare them.
+
+## 10. Final verification (2026-09-25)
+
+### Tests
+- **Default suite:** 358 tests, fake engine, no GPU. It passed 6 consecutive runs.
+- **Real-model suite:** 4 tests, run under memguard with a peak of 12.7 GB.
+
+### Real end-to-end runs (M5 Pro)
+
+| Book | Result |
+|---|---|
+| RU epub | 3 chapters, CER 0% on prose |
+| EN docx → MP3 + M4B | Notes excluded automatically; M4B chapter markers correct; CER 0% |
+| RU fb2, 21.6k chars | 24.5 min of audio in 4 min 50 s (**5.2× real time with QA**) |
+| RU scanned PDF | Converted through on-device OCR |
+
+In the 21.6k-char run the worker used 5.9–9.9 GB, and the session-wide peak across all processes was 14.3 GB.
+
+### Features verified in the browser
+- sample from the middle of the book, with progressive playback
+- approve the sample, then convert
+- play a chapter while it is still being generated, with automatic switch to the final MP3 and auto-advance
+- pause/resume
+- hard-kill the server, restart and resume without redoing finished work
+- design a voice (VoiceDesign model swap, ~7 s)
+- clone a voice from an m4a clip
+- Convert again
+- responsive layout at 375–1440 px
+
+### Normalization (heard via Whisper)
+Years, dates, money, house numbers, time, centuries, percentages, "т.е.", 1/2 gender agreement, case after prepositions, and ё in common words and names.
+
+### Code review (Opus)
+- The review raised 14 findings, and all are fixed with regression tests.
+- Security: SPA path traversal, DNS-rebinding/CSRF (TrustedHost and Origin checks), AppleScript injection, zip bombs, ffmpeg protocol whitelist, upload caps.
+- Robustness: stuck "assembling" chapters, stalled samples, pause/resume double synthesis, the double-start race, orphaned processes after SIGKILL (child watchdog thread plus pool initializer), a fail-safe memory supervisor, blocking I/O on the event loop, and bounded shutdown.
+
+### Known limitations
+- Russian stress on homographs depends on the model.
+- Rare case-agreement constructions may be read in the nominative.
+- Complex PDF layouts are parsed heuristically.
+- MOBI support is untested because there is no fixture.

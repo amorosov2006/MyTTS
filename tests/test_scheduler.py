@@ -241,3 +241,13 @@ async def test_post_processing_failure_does_not_hang_job(running_scheduler, samp
     await sch.start_job(info.id)
     await _wait_for(lambda: sch.get_job(info.id).status == JobStatus.done, timeout=10)
     assert sch.store.job_segment_totals(info.id).get("failed", 0) == 1
+
+
+async def test_chapter_progress_counters(running_scheduler, sample_book_txt):
+    sch = running_scheduler
+    info = await sch.create_job(sample_book_txt, "sample_book.txt")
+    await sch.start_job(info.id)
+    await _wait_for(lambda: sch.get_job(info.id).status == JobStatus.done, timeout=10)
+    for c in sch.get_job(info.id).chapters:
+        if c.include and c.segments_total:
+            assert c.segments_done == c.segments_total

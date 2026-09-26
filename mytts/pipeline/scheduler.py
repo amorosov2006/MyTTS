@@ -207,6 +207,7 @@ class Scheduler:
                 self.store.update_chapter_state(job_id, cm.index, status="skipped", segments_total=0)
         self.store.update_job(job_id, status=JobStatus.queued)
         self._job_stats[job_id] = {"started_at": time.monotonic(), "busy_s": 0.0}
+        self._update_progress(job_id)
         if job_id not in self._run_queue:
             self._run_queue.append(job_id)
         self._wakeup.set()
@@ -429,18 +430,30 @@ class Scheduler:
                 log.exception("post-processing failed")
                 self.store.mark_segment_failed(job_id, seg_row["id"], f"post-processing: {e}")
                 self._log(job_id, "warning", f"segment {seg_row['id']} post-processing failed: {e}")
+                self._update_chapter_progress(job_id, seg_row["chapter"])
                 self._update_progress(job_id)
                 await self._maybe_finish_chapter(job_id, seg_row["chapter"], settings)
                 return
             self.store.mark_segment_done(job_id, seg_row["id"], str(out_wav), duration, result.cer,
-                                          result.transcript)
+                                          result.transcript, result.attempts)
             self.bus.publish(Event(type="segment", job_id=job_id, data={
                 "segment_id": seg_row["id"], "chapter": seg_row["chapter"], "index": seg_row["idx"],
                 "url": f"/api/jobs/{job_id}/segments/{seg_row['id']}/audio",
                 "duration_s": duration, "cer": result.cer,
             }))
+        self._update_chapter_progress(job_id, seg_row["chapter"])
         self._update_progress(job_id)
         await self._maybe_finish_chapter(job_id, seg_row["chapter"], settings)
+
+    def _update_chapter_progress(self, job_id: str, chapter: int) -> None:
+        counts = self.store.chapter_segment_counts(job_id, chapter)
+        cs = next((c for c in self.store.get_chapters(job_id) if c.index == chapter), None)
+        if cs is None:
+            return
+        update = {"segments_done": counts.get("done", 0) + counts.get("failed", 0)}
+        if cs.status == "pending":
+            update["status"] = "running"
+        self.store.update_chapter_state(job_id, chapter, **update)
 
     def _update_progress(self, job_id: str) -> None:
         totals = self.store.job_segment_totals(job_id)

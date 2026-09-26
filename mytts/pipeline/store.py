@@ -376,12 +376,12 @@ class Store:
             )
 
     def mark_segment_done(self, job_id: str, segment_id: str, processed_wav: str, duration_s: float,
-                           cer: Optional[float], transcript: Optional[str]) -> None:
+                           cer: Optional[float], transcript: Optional[str], attempts: int = 1) -> None:
         with self._lock, self._conn:
             self._conn.execute(
                 "UPDATE segments SET status='done', processed_wav=?, duration_s=?, cer=?,"
-                " transcript=? WHERE job_id=? AND id=?",
-                (processed_wav, duration_s, cer, transcript, job_id, segment_id),
+                " transcript=?, attempts=? WHERE job_id=? AND id=?",
+                (processed_wav, duration_s, cer, transcript, attempts, job_id, segment_id),
             )
 
     def mark_segment_failed(self, job_id: str, segment_id: str, error: str) -> None:

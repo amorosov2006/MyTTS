@@ -211,6 +211,7 @@ class Scheduler:
             else:
                 self.store.update_chapter_state(job_id, cm.index, status="skipped", segments_total=0)
         self.store.update_job(job_id, status=JobStatus.queued)
+        self.store.claim_output_dir(job_id, info.settings, book_json.get("author"), book_json["title"])
         self._job_stats[job_id] = {"started_at": time.monotonic(), "busy_s": 0.0}
         self._update_progress(job_id)
         if job_id not in self._run_queue:
@@ -498,7 +499,7 @@ class Scheduler:
         rows = self.store.chapter_segments(job_id, chapter)
         seg_list = [(r["processed_wav"], r["pause_after_ms"]) for r in rows if r["status"] == "done"]
         book = self.store.read_book_json(job_id)
-        out_dir = self.store.output_book_dir(settings, book.get("author"), book.get("title"))
+        out_dir = self.store.claim_output_dir(job_id, settings, book.get("author"), book.get("title"))
         included = [c for c in chapters if c.include]
         chapter_num = sum(1 for c in included if c.index <= chapter)
         fname = sanitize_filename(f"{chapter_num:02d} - {cs.title or f'Chapter {chapter_num}'}.mp3",
@@ -556,7 +557,7 @@ class Scheduler:
         book = self.store.read_book_json(job_id)
         chapters = self.store.get_chapters(job_id)
         included = [c for c in chapters if c.include]
-        out_dir = self.store.output_book_dir(settings, book.get("author"), book.get("title"))
+        out_dir = self.store.claim_output_dir(job_id, settings, book.get("author"), book.get("title"))
         if settings.output_format in (OutputFormat.m4b, OutputFormat.both):
             entries = [
                 (self.store.get_chapter_file(job_id, c.index), c.title or f"Chapter {i + 1}")

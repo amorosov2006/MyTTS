@@ -171,6 +171,28 @@ class Store:
         d.mkdir(parents=True, exist_ok=True)
         return d
 
+    def claim_output_dir(self, job_id: str, settings: JobSettings, author: Optional[str],
+                         title: str) -> Path:
+        """The job's own book folder: "<Author - Title>", or "... (2)", "(3)" when that folder
+        already holds another job's (or anyone's) files — never overwrite a previous conversion.
+        Ownership is recorded in a hidden .mytts-job marker; the path is stored on the job."""
+        info = self.get_job_info(job_id)
+        if info is not None and info.output_path:
+            d = Path(info.output_path)
+            d.mkdir(parents=True, exist_ok=True)
+            return d
+        first = self.output_book_dir(settings, author, title)
+        for n in range(1, 1000):
+            d = first if n == 1 else first.with_name(f"{first.name} ({n})")
+            marker = d / ".mytts-job"
+            owner = marker.read_text().strip() if marker.exists() else None
+            if owner == job_id or (owner is None and (not d.exists() or not any(d.iterdir()))):
+                d.mkdir(parents=True, exist_ok=True)
+                marker.write_text(job_id)
+                self.update_job(job_id, output_path=str(d))
+                return d
+        raise RuntimeError("no free output folder name")
+
     # ------------------------------------------------------------------ jobs
 
     def create_job(self, book: Book, settings: JobSettings, source_path: Path) -> str:

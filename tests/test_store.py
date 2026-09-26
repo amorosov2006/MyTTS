@@ -123,3 +123,21 @@ def test_sample_lifecycle(store, tmp_path):
     store.mark_sample_segment_done("smp_x", "smp_x-0000", "/tmp/s.wav", 0.5)
     assert store.sample_segments_pending_count("smp_x") == 0
     assert store.oldest_pending_sample() is None
+
+
+def test_claim_output_dir_never_overwrites_other_jobs(tmp_path):
+    from mytts.contracts import JobSettings
+    from mytts.pipeline.store import Store
+    from tests.fixtures.fake_services import fake_parse_book
+
+    store = Store(tmp_path / "db.sqlite")
+    src = tmp_path / "book.txt"
+    src.write_text("Title\n\nChapter 1\n\nText.", encoding="utf-8")
+    settings = JobSettings(output_dir=str(tmp_path / "out"))
+    a = store.create_job(fake_parse_book(src), settings, src)
+    b = store.create_job(fake_parse_book(src), settings, src)
+    da = store.claim_output_dir(a, settings, "Автор", "Книга")
+    (da / "01.mp3").write_bytes(b"x")
+    db = store.claim_output_dir(b, settings, "Автор", "Книга")
+    assert da.name == "Автор - Книга" and db.name == "Автор - Книга (2)"
+    assert store.claim_output_dir(a, settings, "Автор", "Книга") == da  # stable on resume

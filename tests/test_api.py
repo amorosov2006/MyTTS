@@ -23,7 +23,8 @@ def worker():
 
 @pytest.fixture
 def client(fake_services, worker, tmp_path):
-    app = create_app(services=fake_services, worker=worker, data_dir=tmp_path / "data")
+    app = create_app(services=fake_services, worker=worker, data_dir=tmp_path / "data",
+                      allowed_hosts=["127.0.0.1", "localhost", "testserver"])
     with TestClient(app) as c:
         yield c
 
@@ -314,7 +315,8 @@ def live_app(fake_services, tmp_path):
     the *entire* response before returning it — it can't be used to test a live stream.
     A real uvicorn server over a real socket streams properly, so SSE tests use this instead."""
     worker = FakeWorker()
-    app = create_app(services=fake_services, worker=worker, data_dir=tmp_path / "data")
+    app = create_app(services=fake_services, worker=worker, data_dir=tmp_path / "data",
+                      allowed_hosts=["127.0.0.1", "localhost", "testserver"])
     port = _free_port()
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", lifespan="on")
     server = uvicorn.Server(config)

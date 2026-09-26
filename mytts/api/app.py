@@ -11,11 +11,13 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from mytts import config
 from mytts.contracts import (
@@ -31,7 +33,19 @@ log = logging.getLogger("mytts.api")
 
 APP_VERSION = "0.1.0"
 UPLOAD_MAX_BYTES = 200 * 1024 * 1024
+CLONE_MAX_BYTES = 50 * 1024 * 1024
+CLONE_ALLOWED_EXTENSIONS = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".aiff", ".caf"}
 SSE_PING_S = 15
+DEFAULT_ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
+
+
+def _origin_allowed(origin: str) -> bool:
+    """Any port on 127.0.0.1/localhost is fine (covers the Vite dev server)."""
+    try:
+        hostname = urlparse(origin).hostname
+    except ValueError:
+        return False
+    return hostname in ("127.0.0.1", "localhost")
 
 
 class PickFolderRequest(BaseModel):
@@ -52,7 +66,8 @@ class VoiceDesignRequest(BaseModel):
 
 
 def create_app(services: Optional[Services] = None, worker: Optional[TTSWorker] = None,
-               data_dir: Optional[Path] = None) -> FastAPI:
+               data_dir: Optional[Path] = None,
+               allowed_hosts: Optional[list[str]] = None) -> FastAPI:
     if data_dir is not None:
         data_dir = Path(data_dir)
         data_dir.mkdir(parents=True, exist_ok=True)
@@ -98,6 +113,19 @@ def create_app(services: Optional[Services] = None, worker: Optional[TTSWorker] 
     app.state.worker = worker
     app.state.voices = voices
 
+    # DNS-rebinding / CSRF hardening: this server only ever expects the local UI to
+    # talk to it. TrustedHostMiddleware checks Host; the Origin check below covers
+    # requests a rebound page or a foreign site could still forge.
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts or DEFAULT_ALLOWED_HOSTS)
+
+    @app.middleware("http")
+    async def _check_origin(request: Request, call_next):
+        if request.method not in ("GET", "HEAD", "OPTIONS"):
+            origin = request.headers.get("origin")
+            if origin and not _origin_allowed(origin):
+                return JSONResponse(status_code=403, content={"detail": "origin not allowed"})
+        return await call_next(request)
+
     @app.exception_handler(NotFoundError)
     async def _h_not_found(_req, exc: NotFoundError):
         return JSONResponse(status_code=404, content={"detail": str(exc)})
@@ -138,22 +166,30 @@ def create_app(services: Optional[Services] = None, worker: Optional[TTSWorker] 
 
     @app.post("/api/pick-folder")
     async def pick_folder(body: PickFolderRequest = PickFolderRequest()):
-        def _run() -> Optional[str]:
-            script = 'POSIX path of (choose folder with prompt "Choose output folder"'
-            if body.start:
-                script += f' default location (POSIX file "{body.start}")'
-            script += ")"
-            import subprocess
+        def _run(start: Optional[str]) -> Optional[str]:
+            # `start` is untrusted; it is passed as its own argv item (never interpolated
+            # into the script text) so it can't break out into arbitrary AppleScript.
+            use_start = bool(start) and Path(start).is_dir()
+            cmd = ["osascript", "-e", "on run argv"]
+            if use_start:
+                cmd += [
+                    "-e", 'set p to POSIX path of (choose folder with prompt'
+                          ' "Choose output folder" default location (POSIX file (item 1 of argv)))',
+                ]
+            else:
+                cmd += ["-e", 'set p to POSIX path of (choose folder with prompt "Choose output folder")']
+            cmd += ["-e", "return p", "-e", "end run", "--"]
+            if use_start:
+                cmd.append(start)
             try:
-                out = subprocess.run(["osascript", "-e", script], capture_output=True, text=True,
-                                      timeout=300)
+                out = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
             except Exception:
                 return None
             if out.returncode != 0:
                 return None
             return out.stdout.strip() or None
 
-        path = await asyncio.to_thread(_run)
+        path = await asyncio.to_thread(_run, body.start)
         return {"path": path}
 
     @app.get("/api/formats")
@@ -207,12 +243,22 @@ def create_app(services: Optional[Services] = None, worker: Optional[TTSWorker] 
     async def clone_voice(audio: UploadFile = File(...), transcript: str = Form(...),
                            name: str = Form(...), lang: Lang = Form(...),
                            gender: Optional[str] = Form(None)):
-        suffix = Path(audio.filename or "clip").suffix or ".wav"
+        suffix = Path(audio.filename or "clip").suffix.lower() or ".wav"
+        if suffix not in CLONE_ALLOWED_EXTENSIONS:
+            raise HTTPException(415, f"unsupported audio format: {suffix}")
         fd, tmp_name = tempfile.mkstemp(suffix=suffix)
         tmp_path = Path(tmp_name)
         try:
+            size = 0
             with os.fdopen(fd, "wb") as f:
-                f.write(await audio.read())
+                while True:
+                    chunk = await audio.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > CLONE_MAX_BYTES:
+                        raise HTTPException(413, "audio file too large")
+                    f.write(chunk)
             v = await asyncio.to_thread(voices.add_cloned, tmp_path, transcript, name, lang, gender)
         finally:
             tmp_path.unlink(missing_ok=True)
@@ -427,10 +473,12 @@ def create_app(services: Optional[Services] = None, worker: Optional[TTSWorker] 
 
     index_html = config.STATIC_DIR / "index.html"
     if index_html.is_file():
+        static_root = config.STATIC_DIR.resolve()
+
         @app.get("/{full_path:path}")
         async def spa(full_path: str):
-            candidate = config.STATIC_DIR / full_path
-            if full_path and candidate.is_file():
+            candidate = (config.STATIC_DIR / full_path).resolve()
+            if full_path and candidate.is_relative_to(static_root) and candidate.is_file():
                 return FileResponse(candidate)
             return FileResponse(index_html)
     else:

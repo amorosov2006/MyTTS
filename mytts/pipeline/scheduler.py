@@ -15,6 +15,7 @@ import asyncio
 import base64
 import functools
 import logging
+import os
 import time
 from concurrent.futures import Executor, ProcessPoolExecutor
 from typing import Optional
@@ -58,6 +59,18 @@ def _same_lang_prefix(rows: list) -> list:
     return out
 
 
+def _exit_with_parent(parent_pid: int) -> None:
+    """Pool-worker initializer: if the app is killed (even SIGKILL), don't linger as an orphan."""
+    import threading
+
+    def watch() -> None:
+        while os.getppid() == parent_pid:
+            time.sleep(1.0)
+        os._exit(0)
+
+    threading.Thread(target=watch, daemon=True).start()
+
+
 class Scheduler:
     def __init__(self, store: Store, services: Services, bus: EventBus, worker: TTSWorker,
                  voices: Optional[VoiceRegistry] = None, executor: Optional[Executor] = None,
@@ -69,7 +82,8 @@ class Scheduler:
         self.voices = voices or VoiceRegistry()
         self.worker_lock = asyncio.Lock()
         self._owns_executor = executor is None
-        self._executor = executor or ProcessPoolExecutor(max_workers=max_cpu_workers)
+        self._executor = executor or ProcessPoolExecutor(
+            max_workers=max_cpu_workers, initializer=_exit_with_parent, initargs=(os.getpid(),))
         self._run_queue: list[str] = []
         self._job_stats: dict[str, dict] = {}
         self._retries: dict[str, int] = {}

@@ -1,0 +1,116 @@
+{
+  "quiet_station_ru": {
+    "title": "Тихая станция",
+    "author": "Иван Петров",
+    "lang": "ru",
+    "chapter_titles": [
+      "Глава 1. Туман",
+      "Глава 2. Письмо",
+      "Глава 3. Мост"
+    ],
+    "key_sentences": [
+      "На улице висел густой туман, затрудняющий проход даже в полдень.",
+      "Письмо пришло в самый неожиданный момент, когда смотритель уже не ждал никаких новостей.",
+      "Мост через реку был единственным путём в новую жизнь, но смотритель боялся его пересечь."
+    ],
+    "footnote_text": "Примечание автора: это вымышленная история.",
+    "formats": {
+      "epub": [
+        "title",
+        "author",
+        "lang",
+        "chapters",
+        "footnote"
+      ],
+      "fb2": [
+        "title",
+        "author",
+        "lang",
+        "chapters",
+        "footnote"
+      ],
+      "docx": [
+        "title",
+        "author",
+        "lang",
+        "chapters",
+        "footnote"
+      ],
+      "pdf": [
+        "title",
+        "lang",
+        "chapters"
+      ],
+      "txt": [
+        "lang",
+        "chapters"
+      ],
+      "md": [
+        "lang",
+        "chapters"
+      ],
+      "html": [
+        "title",
+        "lang",
+        "chapters"
+      ]
+    }
+  },
+  "quiet_station_en": {
+    "title": "The Quiet Station",
+    "author": "John Peters",
+    "lang": "en",
+    "chapter_titles": [
+      "Chapter 1. Fog",
+      "Chapter 2. The Letter",
+      "Chapter 3. The Bridge"
+    ],
+    "key_sentences": [
+      "A thick fog hung over the street, making passage difficult even in broad daylight.",
+      "The letter arrived at the most unexpected moment, when the station master had long stopped hoping for any news.",
+      "The bridge across the river was the only path to a new life, but the station master feared to cross it."
+    ],
+    "footnote_text": "Author's note: this is a fictional story.",
+    "formats": {
+      "epub": [
+        "title",
+        "author",
+        "lang",
+        "chapters",
+        "footnote"
+      ],
+      "fb2": [
+        "title",
+        "author",
+        "lang",
+        "chapters",
+        "footnote"
+      ],
+      "docx": [
+        "title",
+        "author",
+        "lang",
+        "chapters",
+        "footnote"
+      ],
+      "pdf": [
+        "title",
+        "lang",
+        "chapters"
+      ],
+      "txt": [
+        "lang",
+        "chapters"
+      ],
+      "md": [
+        "lang",
+        "chapters"
+      ],
+      "html": [
+        "title",
+        "lang",
+        "chapters"
+      ]
+    }
+  }
+}

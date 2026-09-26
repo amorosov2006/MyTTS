@@ -6,6 +6,12 @@
       "runtimeExecutable": "python3",
       "runtimeArgs": ["-m", "http.server", "8765", "--bind", "127.0.0.1", "--directory", "/Users/anatolius/Projects/MyTTS"],
       "port": 8765
+    },
+    {
+      "name": "mytts-frontend",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "cd frontend && npm run dev:all"],
+      "port": 5173
     }
   ]
 }

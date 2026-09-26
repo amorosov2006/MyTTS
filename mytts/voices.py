@@ -128,14 +128,18 @@ def _write_meta(d: Path, voice_id: str, name: str, lang: Lang, gender: Optional[
 
 
 def _to_wav(src: Path, dst: Path) -> float:
-    """ffmpeg -> 24 kHz mono wav at `dst`. Returns duration in seconds."""
+    """ffmpeg -> 24 kHz mono wav at `dst`. Returns duration in seconds.
+
+    `-protocol_whitelist file,pipe` keeps ffmpeg from opening anything but plain
+    files (no `concat:`/network protocols) when fed an untrusted upload."""
     subprocess.run(
-        ["ffmpeg", "-y", "-i", str(src), "-ac", "1", "-ar", str(config.SAMPLE_RATE), str(dst)],
-        check=True, capture_output=True,
+        ["ffmpeg", "-nostdin", "-protocol_whitelist", "file,pipe", "-y", "-i", str(src),
+         "-ac", "1", "-ar", str(config.SAMPLE_RATE), str(dst)],
+        check=True, capture_output=True, timeout=60,
     )
     probe = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", str(dst)],
-        check=True, capture_output=True, text=True,
+        ["ffprobe", "-v", "error", "-protocol_whitelist", "file,pipe", "-show_entries",
+         "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(dst)],
+        check=True, capture_output=True, text=True, timeout=60,
     )
     return float(probe.stdout.strip())

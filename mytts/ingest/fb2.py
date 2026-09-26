@@ -132,7 +132,7 @@ def _author_name(author_el) -> str | None:
 
 
 def _read_root(data: bytes) -> etree._Element:
-    parser = etree.XMLParser(recover=True, huge_tree=True)
+    parser = etree.XMLParser(recover=True, huge_tree=True, resolve_entities=False, no_network=True)
     try:
         root = etree.fromstring(data, parser=parser)
     except Exception:

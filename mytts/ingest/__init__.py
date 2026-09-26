@@ -41,6 +41,35 @@ SUPPORTED_EXTENSIONS = [
 
 _TEXTUTIL_FORMATS = {".rtf": "rtf", ".odt": "odt", ".doc": "doc"}
 
+MAX_PLAIN_FILE_BYTES = 200 * 1024 * 1024
+MAX_ZIP_TOTAL_UNCOMPRESSED = 500 * 1024 * 1024
+MAX_ZIP_MEMBER_UNCOMPRESSED = 300 * 1024 * 1024
+MAX_ZIP_MEMBERS = 10_000
+MAX_ZIP_COMPRESSION_RATIO = 100
+_ZIP_RATIO_MIN_ARCHIVE_BYTES = 1024 * 1024
+
+
+def _check_zip_safety(path: Path) -> None:
+    """Reject zip bombs before any member is decompressed: too many entries, too
+    much (or too concentrated) uncompressed data, or a suspicious ratio against the
+    archive's actual size on disk (which, unlike header fields, can't be forged)."""
+    try:
+        with zipfile.ZipFile(path) as z:
+            infos = z.infolist()
+    except zipfile.BadZipFile:
+        return  # let the format-specific parser raise a clearer "corrupt archive" error
+    if len(infos) > MAX_ZIP_MEMBERS:
+        raise IngestError("This archive has too many entries to be a real book.")
+    total_uncompressed = sum(i.file_size for i in infos)
+    if total_uncompressed > MAX_ZIP_TOTAL_UNCOMPRESSED:
+        raise IngestError("This archive is too large once decompressed.")
+    if any(i.file_size > MAX_ZIP_MEMBER_UNCOMPRESSED for i in infos):
+        raise IngestError("This archive contains an entry that is too large.")
+    archive_size = path.stat().st_size
+    ratio = total_uncompressed / archive_size if archive_size else 0
+    if archive_size > _ZIP_RATIO_MIN_ARCHIVE_BYTES and ratio > MAX_ZIP_COMPRESSION_RATIO:
+        raise IngestError("This archive's compression ratio looks like a zip bomb.")
+
 
 def _match_extension(path: Path) -> str | None:
     name = path.name.lower()
@@ -73,8 +102,14 @@ def parse_book(path: Path) -> Book:
     path = Path(path)
     if not path.exists():
         raise IngestError(f"File not found: {path}")
-    if path.stat().st_size == 0:
+    size = path.stat().st_size
+    if size == 0:
         raise IngestError("This file is empty.")
+
+    if zipfile.is_zipfile(path):
+        _check_zip_safety(path)
+    elif size > MAX_PLAIN_FILE_BYTES:
+        raise IngestError("This file is too large to convert.")
 
     ext = _match_extension(path)
     if ext is None:

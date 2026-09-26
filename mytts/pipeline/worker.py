@@ -195,12 +195,21 @@ def _child_main(conn, engine_name: str) -> None:
             verifier = _make_verifier(engine_name)
         return verifier
 
+    last_activity = time.monotonic()
     try:
         while True:
             if not conn.poll(1.0):
                 if os.getppid() != parent_pid:
                     return  # parent gone; do not become an orphan
+                if (engine is not None or verifier is not None) and \
+                        time.monotonic() - last_activity > config.WORKER_IDLE_UNLOAD_S:
+                    if engine is not None:
+                        engine.unload()
+                    engine = verifier = None
+                    import gc
+                    gc.collect()
                 continue
+            last_activity = time.monotonic()
             try:
                 req = conn.recv()
             except (EOFError, OSError):
@@ -390,6 +399,8 @@ class ProcessWorker:
 
     async def _call(self, req: dict):
         async with self._lock:
+            if (self._proc is None or not self._proc.is_alive()) and self._state in ("stopped", "failed"):
+                await self.start()  # raises WorkerCrashed (with the reason) if still no headroom
             if self._proc is None or not self._proc.is_alive():
                 raise WorkerCrashed("worker not running")
             self._state = "busy"

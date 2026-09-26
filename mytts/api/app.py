@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 import os
 import tempfile
 import uuid
@@ -24,6 +25,8 @@ from mytts.pipeline.scheduler import ConflictError, NotFoundError, Scheduler
 from mytts.pipeline.services import Services
 from mytts.pipeline.store import Store
 from mytts.voices import VoiceError, VoiceRegistry
+
+log = logging.getLogger("mytts.api")
 
 APP_VERSION = "0.1.0"
 UPLOAD_MAX_BYTES = 200 * 1024 * 1024
@@ -74,7 +77,10 @@ def create_app(services: Optional[Services] = None, worker: Optional[TTSWorker] 
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        await worker.start()
+        try:
+            await worker.start()
+        except Exception as e:  # stays visible as worker state "failed"; retried on first use
+            log.warning("worker did not start: %s", e)
         await scheduler.start()
         try:
             yield

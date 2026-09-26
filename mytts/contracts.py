@@ -230,6 +230,7 @@ class ChapterState(BaseModel):
     title: str
     include: bool
     chars: int
+    kind: Literal["body", "front", "back", "notes", "toc"] = "body"
     segments_total: int = 0
     segments_done: int = 0
     status: Literal["pending", "running", "assembling", "done", "failed", "skipped"] = "pending"

@@ -182,7 +182,8 @@ class Store:
         self._write_book_json(workdir, book)
 
         chapters = [
-            ChapterState(index=c.index, title=c.title, include=c.include, chars=c.chars).model_dump()
+            ChapterState(index=c.index, title=c.title, include=c.include, chars=c.chars,
+                         kind=c.kind).model_dump()
             for c in book.chapters
         ]
         now = time.time()

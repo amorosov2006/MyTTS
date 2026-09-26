@@ -41,6 +41,7 @@ WORKER_MEM_CAP_GB = float(os.environ.get("MYTTS_WORKER_MEM_CAP_GB", "18"))  # ki
 MIN_SYSTEM_FREE_GB = 6.0                  # refuse to (re)start worker below this
 MLX_MEMORY_LIMIT_GB = 12
 MLX_CACHE_LIMIT_GB = 2
+WORKER_IDLE_UNLOAD_S = float(os.environ.get("MYTTS_WORKER_IDLE_UNLOAD_S", "600"))  # free models when idle
 
 
 def token_budget(text: str) -> int:

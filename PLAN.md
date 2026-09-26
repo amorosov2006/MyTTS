@@ -1,6 +1,6 @@
 # MyTTS — Offline Book → Audiobook Converter
 
-Status: **PLAN — waiting for user decisions (see §8)**. No code written yet.
+Status: **Phase 0 done — waiting for the user to pick voices (bench/out/listen.html)**.
 
 ## 1. Target machine (measured 2026-09-25)
 
@@ -71,6 +71,46 @@ Rejected alternatives:
 
   Output: real-time factor (RTF) and a book-level ETA.
 - Worker count and batch size stay user-configurable in the UI's Advanced panel.
+
+### Phase 0 results (measured 2026-09-25, M5 Pro)
+
+Unless noted, the runs cloned the Russian male voice with 32 segments.
+
+| Config | Speed (× real-time) | Real peak memory |
+|---|---|---|
+| 1.7B bf16, batch 1 | 2.5× | 11 GB |
+| 1.7B bf16, batch 8 | 7.4× | 11.2 GB |
+| **1.7B 6-bit, batch 8** ★ | **8.6× RU / 8.9× EN** | **9.6 GB** |
+| 1.7B 6-bit, batch 16 | 5.9× (padding waste) | — |
+| 0.6B bf16, batch 8 | 6.7× (earlier run, before the token cap) | — |
+| 2 processes × (6-bit, batch 8) | 9.2× total (+7%) | 20.3 GB |
+| 3 processes (before the token cap) | 3.5× total — **collapse** | unsafe |
+
+Findings:
+- **Default: 1 GPU worker, Qwen3-TTS 1.7B 6-bit, batch 8.**
+  - A second worker adds only +7% speed for 2× the memory. It is not offered by default.
+  - A 10-hour book takes about 70 min of generation, before the QA pass.
+- **Quality (Whisper CER on 8 segments):**
+  - 6-bit is the same as bf16, and batch 8 is the same as batch 1.
+  - Russian: ~0% on normal prose. English: ~1%.
+  - The only miss was a false alarm: Whisper writes digits while the source spells the number in words. **The QA scorer must normalize numbers on both sides.**
+- **Whisper QA** (large-v3-turbo) peaks at 3 GB and takes ~0.08 s per second of audio.
+- **Silero v5.5** runs ~100× real-time on CPU only (MPS is unsupported). Its license is **CC BY-NC-SA 4.0**.
+  - Without normalization it silently drops numbers: "В 1891 г. … 3 дома …" loses all the digits.
+
+### Memory safety (hard rule, after an incident on 2026-09-25)
+
+Two unguarded MLX processes reached ~36 GB each. MLX's own `peak_memory` counter under-reported this badly.
+
+Rules:
+- **Total footprint of everything we launch must stay < 30 GB.**
+- The GPU worker calls `mx.set_memory_limit(12 GB)` and `mx.set_cache_limit(2 GB)`, and calls `mx.clear_cache()` after each batch.
+- **Per-segment `max_tokens` = 1.5 × chars + 60.** A sequence that never emits end-of-speech would otherwise run the whole batch to 4096 tokens, bloating memory. It is also slower: the cap raised speed from 6.4× to 8.6×. If a segment hits the cap, it is flagged for regeneration.
+- The app's worker supervisor uses the same logic as `bench/memguard.py`:
+  - it reads real `phys_footprint` via libproc and available memory via vm_stat;
+  - it refuses to start without headroom;
+  - it kills and restarts the worker above the cap.
+- Budget: TTS worker ~10 GB + Whisper ~3 GB + app/UI ~1 GB ≈ **14 GB**.
 
 ## 4. Architecture
 

@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { JobInfo } from "../../types";
   import * as api from "../../api";
+  import { ApiError } from "../../api";
   import { jobsStore } from "../../stores/jobs.svelte";
   import { toastStore } from "../../stores/toasts.svelte";
   import { playerStore } from "../../stores/player.svelte";
@@ -11,6 +12,7 @@
   let { job }: { job: JobInfo } = $props();
 
   let busy = $state(false);
+  let revealing = $state(false);
 
   const overallFraction = $derived(job.progress.segments_total > 0 ? job.progress.segments_done / job.progress.segments_total : 0);
 
@@ -21,6 +23,24 @@
     done: "success",
     failed: "danger",
     skipped: "neutral",
+  };
+
+  const statusRowClass: Record<string, string> = {
+    pending: "",
+    running: "bg-accent-soft/50",
+    assembling: "bg-accent-soft/50",
+    done: "",
+    failed: "bg-danger-soft/40",
+    skipped: "opacity-50",
+  };
+
+  const statusBarClass: Record<string, string> = {
+    pending: "bg-border",
+    running: "bg-accent",
+    assembling: "bg-accent",
+    done: "bg-success",
+    failed: "bg-danger",
+    skipped: "bg-border",
   };
 
   async function start() {
@@ -54,6 +74,21 @@
 
   function playChapter(index: number) {
     if (job.id) playerStore.playChapter(job.id, index);
+  }
+
+  async function reveal() {
+    revealing = true;
+    try {
+      await api.revealJob(job.id);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        toastStore.error("Output folder not created yet.");
+      } else {
+        toastStore.error((err as any)?.detail || "Could not open the output folder.");
+      }
+    } finally {
+      revealing = false;
+    }
   }
 </script>
 
@@ -107,9 +142,16 @@
       </div>
 
       {#if job.output_path}
-        <div class="mt-3 pt-3 border-t border-border text-xs text-muted flex items-center gap-1.5">
-          <Icon name="folder" size={13} />
-          Saved to <span class="font-mono">{job.output_path}</span>
+        <div class="mt-3 pt-3 border-t border-border text-xs text-muted flex items-center gap-1.5 flex-wrap">
+          <Icon name="folder" size={13} class="shrink-0" />
+          <span class="min-w-0">Saved to <span class="font-mono break-all">{job.output_path}</span></span>
+          <button
+            class="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-xs text-fg hover:border-accent hover:text-accent transition-colors disabled:opacity-50 shrink-0"
+            onclick={reveal}
+            disabled={revealing}
+          >
+            <Icon name="folder" size={12} /> Show in Finder
+          </button>
         </div>
       {/if}
       {#if job.status === "done"}
@@ -122,7 +164,7 @@
     <h3 class="text-sm font-semibold text-muted uppercase tracking-wide mb-2">Chapters</h3>
     <div class="rounded-2xl border border-border bg-surface divide-y divide-border overflow-hidden">
       {#each job.chapters.filter((c) => c.include) as ch (ch.index)}
-        <div class="px-4 py-3 flex items-center gap-3">
+        <div class="px-4 py-3 flex items-center gap-3 transition-colors {statusRowClass[ch.status] ?? ''}">
           <button
             class="w-8 h-8 rounded-full flex items-center justify-center bg-surface-2 hover:bg-accent hover:text-accent-fg transition-colors shrink-0 disabled:opacity-30"
             disabled={ch.status === "pending" || ch.status === "skipped"}
@@ -132,12 +174,26 @@
             <Icon name="play" size={12} />
           </button>
           <div class="min-w-0 flex-1">
-            <div class="text-sm font-medium truncate">{ch.title || `Chapter ${ch.index + 1}`}</div>
-            <div class="h-1.5 rounded-full bg-surface-2 overflow-hidden mt-1 max-w-xs">
-              <div class="h-full bg-accent" style="width:{ch.segments_total ? (ch.segments_done / ch.segments_total) * 100 : 0}%"></div>
+            <div class="text-sm font-medium truncate flex items-center gap-1.5" title={ch.title || `Chapter ${ch.index + 1}`}>
+              {#if ch.status === "running" || ch.status === "assembling"}
+                <span class="relative flex h-2 w-2 shrink-0" aria-hidden="true">
+                  <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-60"></span>
+                  <span class="relative inline-flex rounded-full h-2 w-2 bg-accent"></span>
+                </span>
+              {/if}
+              <span class="truncate">{ch.title || `Chapter ${ch.index + 1}`}</span>
             </div>
+            <div class="h-1.5 rounded-full bg-surface-2 overflow-hidden mt-1 max-w-xs">
+              <div
+                class="h-full transition-all duration-300 {statusBarClass[ch.status] ?? 'bg-accent'} {ch.status === 'running' ? 'animate-pulse' : ''}"
+                style="width:{ch.segments_total ? (ch.segments_done / ch.segments_total) * 100 : ch.status === 'done' ? 100 : 0}%"
+              ></div>
+            </div>
+            {#if ch.segments_total > 0 && ch.status !== "done" && ch.status !== "skipped"}
+              <div class="text-[11px] text-muted mt-0.5 tabular-nums">{ch.segments_done} / {ch.segments_total} segments</div>
+            {/if}
           </div>
-          <div class="text-xs text-muted w-16 text-right shrink-0">{ch.duration_s ? formatClock(ch.duration_s) : "—"}</div>
+          <div class="text-xs text-muted w-16 text-right shrink-0 tabular-nums">{ch.status === "done" && ch.duration_s ? formatClock(ch.duration_s) : "—"}</div>
           <Badge tone={statusTone[ch.status]}>{ch.status}</Badge>
         </div>
       {/each}

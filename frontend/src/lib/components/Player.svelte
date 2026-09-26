@@ -30,6 +30,8 @@
   }
 
   const rates = [0.75, 1, 1.25, 1.5, 1.75, 2];
+
+  let moreOpen = $state(false);
 </script>
 
 <svelte:window onkeydown={onKeydown} />
@@ -37,12 +39,13 @@
 <audio bind:this={audioEl}></audio>
 
 {#if job}
-  <div class="h-20 shrink-0 border-t border-border bg-surface flex items-center gap-4 px-4 relative">
-    <div class="flex items-center gap-3 w-56 min-w-0 shrink-0">
-      <CoverThumb jobId={job.id} title={job.title} hasCover={job.has_cover} size={44} />
-      <div class="min-w-0">
-        <div class="text-sm font-medium truncate">{job.title}</div>
-        <div class="text-xs text-muted truncate">{chapter?.title || "—"}</div>
+  <div class="shrink-0 border-t border-border bg-surface relative">
+    <div class="flex items-center gap-2 sm:gap-3 min-[960px]:gap-4 px-3 min-[960px]:px-4 py-2 min-[960px]:h-20 min-[960px]:py-0">
+    <div class="flex items-center gap-2 min-w-0 shrink min-[960px]:shrink-0 min-[960px]:w-56">
+      <CoverThumb jobId={job.id} title={job.title} hasCover={job.has_cover} size={40} />
+      <div class="min-w-0 hidden min-[420px]:block">
+        <div class="text-sm font-medium truncate" title={job.title}>{job.title}</div>
+        <div class="text-xs text-muted truncate" title={chapter?.title || undefined}>{chapter?.title || "—"}</div>
       </div>
     </div>
 
@@ -89,7 +92,7 @@
       </div>
     </div>
 
-    <div class="flex items-center gap-3 w-56 justify-end shrink-0">
+    <div class="hidden min-[960px]:flex items-center gap-3 w-56 justify-end shrink-0">
       <select
         class="text-xs rounded-md border border-border bg-surface px-1.5 py-1"
         value={playerStore.rate}
@@ -120,8 +123,56 @@
       </button>
     </div>
 
+    <div class="flex min-[960px]:hidden items-center gap-0.5 shrink-0">
+      <button
+        class="p-2 rounded-lg text-muted hover:bg-surface-2 hover:text-fg relative"
+        onclick={() => (playerStore.queueOpen = !playerStore.queueOpen)}
+        aria-label="Queue"
+      >
+        <Icon name="queue" size={17} />
+      </button>
+      <button
+        class="p-2 rounded-lg hover:bg-surface-2 hover:text-fg {moreOpen ? 'text-accent' : 'text-muted'}"
+        onclick={() => (moreOpen = !moreOpen)}
+        aria-label="More playback controls"
+        aria-expanded={moreOpen}
+      >
+        <Icon name="sliders" size={17} />
+      </button>
+    </div>
+    </div>
+
+    {#if moreOpen}
+      <div class="min-[960px]:hidden flex items-center gap-4 px-3 pb-2.5 -mt-1">
+        <label class="flex items-center gap-1.5 text-xs text-muted">
+          Speed
+          <select
+            class="text-xs rounded-md border border-border bg-surface px-1.5 py-1"
+            value={playerStore.rate}
+            onchange={(e) => playerStore.setRate(Number((e.target as HTMLSelectElement).value))}
+            aria-label="Playback speed"
+          >
+            {#each rates as r}<option value={r}>{r}×</option>{/each}
+          </select>
+        </label>
+        <div class="flex items-center gap-1.5 flex-1">
+          <Icon name="volume" size={15} class="text-muted shrink-0" />
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.05"
+            value={playerStore.volume}
+            oninput={(e) => playerStore.setVolume(Number((e.target as HTMLInputElement).value))}
+            class="flex-1 accent-[var(--color-accent)]"
+            aria-label="Volume"
+          />
+        </div>
+      </div>
+    {/if}
+
     {#if playerStore.queueOpen}
-      <div class="absolute bottom-full right-4 mb-2 w-72 max-h-96 overflow-y-auto rounded-xl border border-border bg-surface shadow-lift">
+      <div class="absolute bottom-full right-2 sm:right-4 mb-2 w-72 max-w-[88vw] max-h-96 overflow-y-auto rounded-xl border border-border bg-surface shadow-lift">
         <div class="px-3 py-2 border-b border-border text-xs font-semibold uppercase tracking-wide text-muted">Chapters</div>
         {#each playerStore.queue as c (c.index)}
           <button

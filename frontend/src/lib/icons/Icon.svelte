@@ -143,5 +143,16 @@
     <polyline points="12 7 12 12 15.5 14" />
   {:else if name === "square"}
     <rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none" />
+  {:else if name === "menu"}
+    <line x1="3" y1="6" x2="21" y2="6" />
+    <line x1="3" y1="12" x2="21" y2="12" />
+    <line x1="3" y1="18" x2="21" y2="18" />
+  {:else if name === "sliders"}
+    <line x1="4" y1="6" x2="20" y2="6" />
+    <line x1="4" y1="12" x2="20" y2="12" />
+    <line x1="4" y1="18" x2="20" y2="18" />
+    <circle cx="9" cy="6" r="2" fill="var(--color-surface)" />
+    <circle cx="15" cy="12" r="2" fill="var(--color-surface)" />
+    <circle cx="8" cy="18" r="2" fill="var(--color-surface)" />
   {/if}
 </svg>

@@ -311,14 +311,12 @@ function chapterStateFor(ch) {
     title: ch.title,
     include: ch.include,
     chars: ch.chars,
+    kind: ch.kind,
     segments_total: ch.include ? segmentsTotalFor(ch.chars) : 0,
     segments_done: 0,
     status: "pending",
     audio_url: null,
     duration_s: 0,
-    // Not part of mytts/contracts.py's ChapterState — included as a mock-only convenience
-    // so the Chapters step can show a kind badge (front/toc/notes/back/body).
-    kind: ch.kind,
   };
 }
 
@@ -470,7 +468,7 @@ function tickSample(sample, job) {
     const duration_s = Number((chunk.length / CHARS_PER_SECOND / sample.settings.speed).toFixed(2));
     const voice = voices.get(sample.settings.voice_id) || builtinRefFor(job.lang || "en");
     const segment_id = registerSegment(job.id, voice.refPath, voice.mime, duration_s);
-    sample.segments.push(`/api/jobs/${job.id}/segments/${segment_id}/audio`);
+    sample.segments.push(`/api/jobs/${job.id}/samples/${sample.id}/segments/${segment_id}/audio`);
     sample.duration_s += duration_s;
     broadcast({ type: "sample", job_id: job.id, data: { ...sample } });
   } else {
@@ -723,6 +721,23 @@ const server = http.createServer(async (req, res) => {
       const sample = job && (samples.get(job.id) || []).find((s) => s.id === m[2]);
       if (!sample || !sample.refPath) return sendJson(res, 404, { detail: "sample audio not ready" });
       return sendFile(res, sample.refPath, sample.mime || "audio/wav", req);
+    }
+
+    if (method === "GET" && (m = /^\/api\/jobs\/([^/]+)\/samples\/([^/]+)\/segments\/([^/]+)\/audio$/.exec(p))) {
+      const job = jobs.get(m[1]);
+      const sample = job && (samples.get(job.id) || []).find((s) => s.id === m[2]);
+      const seg = segmentFiles.get(m[3]);
+      if (!sample || !seg || !seg.refPath) return sendJson(res, 404, { detail: "segment not found" });
+      return sendFile(res, seg.refPath, seg.mime || "audio/wav", req);
+    }
+
+    // -------- reveal in Finder
+    if (method === "POST" && (m = /^\/api\/jobs\/([^/]+)\/reveal$/.exec(p))) {
+      const job = jobs.get(m[1]);
+      if (!job) return sendJson(res, 404, { detail: "job not found" });
+      if (!job.output_path) return sendJson(res, 404, { detail: "Output folder not created yet." });
+      // Mock: don't actually shell out to `open` — just acknowledge.
+      res.writeHead(204); return res.end();
     }
 
     // -------- conversion control

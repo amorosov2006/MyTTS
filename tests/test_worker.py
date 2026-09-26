@@ -1,3 +1,4 @@
+import os
 import asyncio
 
 import pytest
@@ -154,3 +155,35 @@ async def test_process_worker_refuses_start_without_headroom(monkeypatch):
     with pytest.raises(WorkerCrashed):
         await worker.start()
     assert worker.status().state == "failed"
+
+
+def test_child_exits_when_app_is_killed_mid_batch():
+    """SIGKILL the app while the worker is busy: the child must not keep running unsupervised."""
+    import signal
+    import subprocess
+    import sys
+    import time as _t
+
+    code = r'''
+import asyncio
+from mytts.pipeline.worker import ProcessWorker
+
+async def main():
+    w = ProcessWorker(engine="fake", call_timeout_s=60)
+    await w.start()
+    print(w._proc.pid, flush=True)
+    await w._debug("test_sleep", seconds=60)   # busy: not polling the request loop
+
+asyncio.run(main())
+'''
+    app = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, text=True)
+    child = int(app.stdout.readline())
+    _t.sleep(1.0)
+    os.kill(app.pid, signal.SIGKILL)
+    app.wait()
+    for _ in range(40):
+        if subprocess.run(["kill", "-0", str(child)], capture_output=True).returncode != 0:
+            return
+        _t.sleep(0.1)
+    os.kill(child, signal.SIGKILL)
+    raise AssertionError("worker child survived the app being killed")

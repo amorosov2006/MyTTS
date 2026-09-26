@@ -172,12 +172,30 @@ def _make_designer(name: str):
 
 # --------------------------------------------------------------------------------- child process
 
-def _child_main(conn, engine_name: str) -> None:
+def _start_child_watchdog(parent_pid: int, mem_cap_gb: float) -> None:
+    """Daemon thread in the worker child: exit immediately if the app dies (even mid-batch,
+    when the request loop isn't polling) or if our own footprint passes the cap — a second
+    line of defence behind the parent's supervisor."""
+    import threading
+
+    def watch() -> None:
+        while True:
+            if os.getppid() != parent_pid:
+                os._exit(3)
+            if footprint(os.getpid()) > mem_cap_gb * 1e9 * 1.1:
+                os._exit(4)
+            time.sleep(0.5)
+
+    threading.Thread(target=watch, daemon=True, name="mytts-watchdog").start()
+
+
+def _child_main(conn, engine_name: str, mem_cap_gb: float = config.WORKER_MEM_CAP_GB) -> None:
     """Runs inside the spawned worker process. Request/response protocol over `conn`:
     ops synthesize / design_voice / status / shutdown, plus test-only ops test_alloc / test_sleep
     used by tests to simulate a memory blow-up or a hang without needing the real engine.
     Exits on its own if the parent dies without a clean shutdown (no orphans)."""
     parent_pid = os.getppid()
+    _start_child_watchdog(parent_pid, mem_cap_gb)
     engine: Optional[Engine] = None
     verifier: Optional[Verifier] = None
     leaks: list[bytearray] = []  # test_alloc: keep allocations alive to raise our own footprint
@@ -185,6 +203,10 @@ def _child_main(conn, engine_name: str) -> None:
     def get_engine() -> Engine:
         nonlocal engine
         if engine is None:
+            need = mem_cap_gb * 0.6 + config.MIN_SYSTEM_FREE_GB
+            if engine_name != "fake" and available_bytes() / 1e9 < need:
+                raise MemoryError(f"not enough free memory to load the TTS model "
+                                  f"({available_bytes() / 1e9:.1f} GB available, need {need:.1f} GB)")
             engine = _make_engine(engine_name)
             engine.load()
         return engine
@@ -307,7 +329,8 @@ class ProcessWorker:
             self._state = "starting"
             self._message = None
             parent_conn, child_conn = _ctx.Pipe()
-            proc = _ctx.Process(target=_child_main, args=(child_conn, self.engine_name), daemon=True)
+            proc = _ctx.Process(target=_child_main, args=(child_conn, self.engine_name, self.mem_cap_gb),
+                                daemon=True)
             proc.start()
             child_conn.close()
             self._proc = proc
@@ -351,9 +374,7 @@ class ProcessWorker:
             except OSError:
                 pass
             await asyncio.to_thread(self._proc.join, 5)
-            if self._proc.is_alive():
-                self._kill()
-        self._kill()
+        await asyncio.to_thread(self._kill)
         self._state = "stopped"
         self._message = None
 
@@ -362,7 +383,7 @@ class ProcessWorker:
             return
         self._state = "restarting"
         self._message = reason
-        self._kill()
+        await asyncio.to_thread(self._kill)
         self._restarts += 1
         try:
             await self.start()
@@ -381,9 +402,13 @@ class ProcessWorker:
                     if self._state not in ("restarting", "stopped", "failed"):
                         await self._crash("worker process exited unexpectedly")
                     return
-                fp = footprint(proc.pid) / 1e9
+                try:
+                    fp = footprint(proc.pid) / 1e9
+                    avail = available_bytes() / 1e9
+                except Exception as e:  # can't measure -> can't guarantee the cap: fail safe
+                    await self._crash(f"memory check failed: {e}")
+                    return
                 self._footprint_gb = fp
-                avail = available_bytes() / 1e9
                 if fp > self.mem_cap_gb:
                     await self._crash(f"footprint {fp:.1f} GB > cap {self.mem_cap_gb} GB")
                     return
@@ -404,6 +429,8 @@ class ProcessWorker:
         async with self._lock:
             if (self._proc is None or not self._proc.is_alive()) and self._state in ("stopped", "failed"):
                 await self.start()  # raises WorkerCrashed (with the reason) if still no headroom
+            if self._proc is not None and (self._supervisor_task is None or self._supervisor_task.done()):
+                self._supervisor_task = asyncio.create_task(self._supervise(self._gen))
             if self._proc is None or not self._proc.is_alive():
                 raise WorkerCrashed("worker not running")
             self._state = "busy"

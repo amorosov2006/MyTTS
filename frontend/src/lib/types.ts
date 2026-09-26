@@ -59,14 +59,12 @@ export interface ChapterState {
   title: string;
   include: boolean;
   chars: number;
+  kind: ChapterKind;
   segments_total: number;
   segments_done: number;
   status: ChapterRunStatus;
   audio_url: string | null;
   duration_s: number;
-  /** Not in mytts/contracts.py's ChapterState yet — the mock backend includes it so the
-   * Chapters step can show a kind badge. See the final report's "contract gap" note. */
-  kind?: ChapterKind;
 }
 
 export interface Progress {

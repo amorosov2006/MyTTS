@@ -58,6 +58,24 @@ export const JOB_STATUS_LABEL: Record<JobStatus, string> = {
   cancelled: "Cancelled",
 };
 
+// Mirrors mytts/pipeline/store.py's sanitize_filename() + output_book_dir() closely enough
+// for a client-side preview of the final book folder name (the server has the final say).
+const UNSAFE_FILENAME_CHARS = /[\/:*?"<>|\x00-\x1f]/g;
+
+export function sanitizeFolderName(name: string): string {
+  const cleaned = name.replace(UNSAFE_FILENAME_CHARS, "_").trim().replace(/\s+/g, " ");
+  return (cleaned.slice(0, 150) || "untitled").replace(/^\.+/, "").trim() || "untitled";
+}
+
+export function bookFolderName(author: string | null | undefined, title: string): string {
+  const label = author ? `${author} - ${title}` : title;
+  return sanitizeFolderName(label);
+}
+
+export function joinPath(dir: string, name: string): string {
+  return `${dir.replace(/\/+$/, "")}/${name}`;
+}
+
 export function initials(title: string): string {
   const words = title.trim().split(/\s+/).filter(Boolean);
   if (!words.length) return "?";

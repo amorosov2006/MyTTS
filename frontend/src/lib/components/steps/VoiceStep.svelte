@@ -3,12 +3,14 @@
   import { voicesStore } from "../../stores/voices.svelte";
   import { jobsStore } from "../../stores/jobs.svelte";
   import { toastStore } from "../../stores/toasts.svelte";
+  import { systemStore } from "../../stores/system.svelte";
   import * as api from "../../api";
   import { debounce } from "../../debounce";
   import VoiceCard from "../VoiceCard.svelte";
   import Icon from "../../icons/Icon.svelte";
   import DesignVoiceModal from "../modals/DesignVoiceModal.svelte";
   import CloneVoiceModal from "../modals/CloneVoiceModal.svelte";
+  import { bookFolderName, joinPath } from "../../format";
 
   let { job }: { job: JobInfo } = $props();
 
@@ -31,6 +33,11 @@
 
   const bookLang = $derived(job.lang ?? "en");
   const visibleVoices = $derived(showAllVoices ? voicesStore.items : voicesStore.items.filter((v) => v.lang === bookLang));
+
+  const outputDirDefault = $derived(systemStore.info?.output_dir_default ?? "");
+  const effectiveOutputDir = $derived(settings.output_dir.trim() || outputDirDefault);
+  const bookFolder = $derived(bookFolderName(job.author, job.title));
+  const outputPreview = $derived(effectiveOutputDir ? `${joinPath(effectiveOutputDir, bookFolder)}/` : "");
 
   const save = debounce(async (next: JobSettings) => {
     saveState = "saving";
@@ -97,11 +104,21 @@
           </button>
         </div>
       </div>
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {#each visibleVoices as v (v.id)}
-          <VoiceCard voice={v} selected={settings.voice_id === v.id} onSelect={() => update("voice_id", v.id)} onDelete={() => removeVoice(v.id)} />
-        {/each}
-      </div>
+      {#if visibleVoices.length === 0}
+        <div class="rounded-xl border border-dashed border-border px-4 py-8 text-center text-sm text-muted">
+          No voices for this language yet.
+          {#if !showAllVoices}
+            <button class="text-accent hover:underline" onclick={() => (showAllVoices = true)}>Show all languages</button>,
+          {/if}
+          or design / clone one above.
+        </div>
+      {:else}
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {#each visibleVoices as v (v.id)}
+            <VoiceCard voice={v} selected={settings.voice_id === v.id} onSelect={() => update("voice_id", v.id)} onDelete={() => removeVoice(v.id)} />
+          {/each}
+        </div>
+      {/if}
     </section>
 
     <section class="grid sm:grid-cols-2 gap-6">
@@ -205,13 +222,30 @@
         </select>
       </div>
       <div class="sm:col-span-2">
-        <label class="block text-sm font-medium mb-1" for="outdir">Output folder</label>
+        <div class="flex items-center justify-between mb-1">
+          <label class="block text-sm font-medium" for="outdir">Output folder</label>
+          {#if !settings.output_dir.trim() && outputDirDefault}
+            <span class="text-xs text-muted">Default</span>
+          {/if}
+        </div>
         <div class="flex gap-2">
-          <input id="outdir" class="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm" value={settings.output_dir} oninput={(e) => update("output_dir", (e.target as HTMLInputElement).value)} />
+          <input
+            id="outdir"
+            class="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm"
+            value={settings.output_dir}
+            placeholder={outputDirDefault || undefined}
+            oninput={(e) => update("output_dir", (e.target as HTMLInputElement).value)}
+          />
           <button class="rounded-lg border border-border px-3 py-2 text-sm hover:border-accent hover:text-accent shrink-0 flex items-center gap-1.5" onclick={chooseFolder} disabled={pickingFolder}>
             <Icon name="folder" size={14} /> Choose…
           </button>
         </div>
+        {#if outputPreview}
+          <div class="mt-1.5 text-xs text-muted flex items-center gap-1.5 min-w-0">
+            <Icon name="folder" size={12} class="shrink-0" />
+            <span class="truncate font-mono" title={outputPreview}>{outputPreview}</span>
+          </div>
+        {/if}
       </div>
     </section>
   </fieldset>

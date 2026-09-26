@@ -75,8 +75,8 @@
   }
 </script>
 
-<div class="flex h-full">
-  <div class="flex-1 overflow-y-auto p-6">
+<div class="flex h-full relative overflow-hidden">
+  <div class="flex-1 min-w-0 overflow-y-auto p-6">
     <div class="max-w-3xl mx-auto">
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-lg font-semibold">Chapters</h2>
@@ -110,9 +110,9 @@
                 />
               {:else}
                 <button
-                  class="text-sm font-medium truncate hover:text-accent text-left {editable ? '' : 'cursor-default'}"
+                  class="text-sm font-medium truncate hover:text-accent text-left max-w-full {editable ? '' : 'cursor-default'}"
                   onclick={() => startEdit(ch.index, ch.title)}
-                  title={editable ? "Click to rename" : undefined}
+                  title={editable ? `${ch.title || `Chapter ${ch.index + 1}`} — click to rename` : ch.title || undefined}
                 >
                   {ch.title || `Chapter ${ch.index + 1}`}
                 </button>
@@ -144,9 +144,17 @@
 
   {#if drawerIndex !== null}
     {@const ch = job.chapters.find((c) => c.index === drawerIndex)}
-    <div class="w-96 shrink-0 border-l border-border bg-surface flex flex-col h-full">
+    <div
+      class="max-[959px]:fixed max-[959px]:inset-0 max-[959px]:z-30 max-[959px]:bg-black/40"
+      role="presentation"
+      onclick={() => (drawerIndex = null)}
+    ></div>
+    <div
+      class="w-96 max-w-[92vw] shrink-0 border-l border-border bg-surface flex flex-col h-full
+        max-[959px]:fixed max-[959px]:inset-y-0 max-[959px]:right-0 max-[959px]:z-40 max-[959px]:shadow-lift"
+    >
       <div class="flex items-center justify-between px-4 py-3 border-b border-border">
-        <div class="font-medium text-sm truncate">{ch?.title || `Chapter ${drawerIndex + 1}`}</div>
+        <div class="font-medium text-sm truncate" title={ch?.title || undefined}>{ch?.title || `Chapter ${drawerIndex + 1}`}</div>
         <button class="p-1.5 rounded-lg text-muted hover:bg-surface-2" onclick={() => (drawerIndex = null)} aria-label="Close">
           <Icon name="x" size={16} />
         </button>

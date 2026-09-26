@@ -33,8 +33,8 @@
   tabindex="0"
   class="group w-full text-left rounded-xl p-2.5 flex items-center gap-3 transition-colors border cursor-pointer
     {selected ? 'bg-accent-soft border-accent/40' : 'border-transparent hover:bg-surface-2'}"
-  onclick={() => { jobsStore.select(job.id); uiStore.cancelNewBook(); }}
-  onkeydown={(e) => e.key === "Enter" && (jobsStore.select(job.id), uiStore.cancelNewBook())}
+  onclick={() => { jobsStore.select(job.id); uiStore.cancelNewBook(); uiStore.closeSidebar(); }}
+  onkeydown={(e) => e.key === "Enter" && (jobsStore.select(job.id), uiStore.cancelNewBook(), uiStore.closeSidebar())}
 >
   <CoverThumb jobId={job.id} title={job.title} hasCover={job.has_cover} size={44} />
   <div class="min-w-0 flex-1">

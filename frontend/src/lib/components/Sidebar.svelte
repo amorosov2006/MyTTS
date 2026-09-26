@@ -5,11 +5,25 @@
   import Icon from "../icons/Icon.svelte";
 </script>
 
-<aside class="w-72 shrink-0 border-r border-border bg-surface flex flex-col h-full">
+{#if uiStore.sidebarOpen}
+  <div
+    class="fixed inset-0 z-30 bg-black/40 min-[960px]:hidden"
+    role="presentation"
+    onclick={() => uiStore.closeSidebar()}
+  ></div>
+{/if}
+
+<aside
+  class="z-40 border-r border-border bg-surface flex flex-col h-full w-72
+    max-[959px]:fixed max-[959px]:inset-y-0 max-[959px]:left-0 max-[959px]:max-w-[85vw]
+    max-[959px]:shadow-lift max-[959px]:transition-transform max-[959px]:duration-200
+    {uiStore.sidebarOpen ? 'max-[959px]:translate-x-0' : 'max-[959px]:-translate-x-full'}
+    min-[960px]:shrink-0"
+>
   <div class="p-3">
     <button
       class="w-full flex items-center justify-center gap-2 rounded-xl bg-accent text-accent-fg font-medium text-sm py-2.5 shadow-soft hover:bg-accent-hover transition-colors"
-      onclick={() => uiStore.startNewBook()}
+      onclick={() => { uiStore.startNewBook(); }}
     >
       <Icon name="plus" size={16} />
       New book

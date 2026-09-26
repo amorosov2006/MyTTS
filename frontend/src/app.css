@@ -1,0 +1,89 @@
+@import "tailwindcss";
+
+/* Dark mode is toggled by setting data-theme="dark" on <html> (see stores/theme.svelte.ts),
+   not by the OS media query directly — the store reads the OS preference once as the default. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+@theme {
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui,
+    "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+  --color-bg: #faf6f0;
+  --color-surface: #fffbf6;
+  --color-surface-2: #f3ece1;
+  --color-fg: #2b2420;
+  --color-muted: #8a7c6d;
+  --color-border: #e9ddcd;
+  --color-accent: #b5764a;
+  --color-accent-hover: #9c6440;
+  --color-accent-fg: #fdf6ee;
+  --color-accent-soft: #f3e2d2;
+  --color-danger: #b23b3b;
+  --color-danger-soft: #f6e2df;
+  --color-warning: #a3701f;
+  --color-warning-soft: #f5ead2;
+  --color-success: #3f7d52;
+  --color-success-soft: #e3efe4;
+
+  --shadow-soft: 0 1px 2px rgba(43, 36, 32, 0.04), 0 6px 20px -8px rgba(43, 36, 32, 0.12);
+  --shadow-lift: 0 4px 10px rgba(43, 36, 32, 0.06), 0 16px 40px -12px rgba(43, 36, 32, 0.2);
+}
+
+[data-theme="dark"] {
+  --color-bg: #16130f;
+  --color-surface: #201b16;
+  --color-surface-2: #2a231c;
+  --color-fg: #f2e9dd;
+  --color-muted: #a69683;
+  --color-border: #392f26;
+  --color-accent: #dd9c6c;
+  --color-accent-hover: #e8b088;
+  --color-accent-fg: #201205;
+  --color-accent-soft: #3a2a1c;
+  --color-danger: #e08585;
+  --color-danger-soft: #3a2323;
+  --color-warning: #e0b567;
+  --color-warning-soft: #372c17;
+  --color-success: #86c79a;
+  --color-success-soft: #1f3327;
+
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.2), 0 6px 20px -8px rgba(0, 0, 0, 0.45);
+  --shadow-lift: 0 4px 10px rgba(0, 0, 0, 0.3), 0 16px 40px -12px rgba(0, 0, 0, 0.6);
+}
+
+html {
+  font-family: var(--font-sans);
+  color-scheme: light;
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-fg);
+  min-height: 100vh;
+}
+
+* {
+  scrollbar-color: var(--color-border) transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.lang-ru {
+  font-feature-settings: "liga" 1;
+}

@@ -5,6 +5,7 @@ import asyncio
 import base64
 import logging
 import os
+import subprocess
 import tempfile
 import uuid
 from contextlib import asynccontextmanager
@@ -348,6 +349,14 @@ def create_app(services: Optional[Services] = None, worker: Optional[TTSWorker] 
     @app.post("/api/jobs/{job_id}/cancel")
     async def cancel_job(job_id: str):
         return scheduler.cancel_job(job_id).model_dump(mode="json")
+
+    @app.post("/api/jobs/{job_id}/reveal", status_code=204)
+    async def reveal_job(job_id: str):
+        info = scheduler.get_job(job_id)
+        if not info.output_path or not Path(info.output_path).is_dir():
+            raise HTTPException(404, "no output folder yet")
+        await asyncio.to_thread(subprocess.run, ["open", info.output_path], timeout=10)
+        return Response(status_code=204)
 
     @app.get("/api/jobs/{job_id}/segments/{segment_id}/audio")
     async def segment_audio(job_id: str, segment_id: str):

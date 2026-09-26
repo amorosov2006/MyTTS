@@ -58,15 +58,6 @@ def _same_lang_prefix(rows: list) -> list:
     return out
 
 
-def _same_chapter_lang_prefix(rows: list) -> list:
-    """Never mix chapters in one batch: chapter N+1 must not be sent to the worker until
-    chapter N has nothing pending left (docs/API.md's chapter-order guarantee)."""
-    if not rows:
-        return rows
-    chapter = rows[0]["chapter"]
-    return _same_lang_prefix([r for r in rows if r["chapter"] == chapter])
-
-
 class Scheduler:
     def __init__(self, store: Store, services: Services, bus: EventBus, worker: TTSWorker,
                  voices: Optional[VoiceRegistry] = None, executor: Optional[Executor] = None,
@@ -363,7 +354,7 @@ class Scheduler:
         elif status != JobStatus.running:
             self._run_queue.pop(0)
             return None
-        rows = _same_chapter_lang_prefix(self.store.next_pending_segments(job_id, config.BATCH_SIZE))
+        rows = _same_lang_prefix(self.store.next_pending_segments(job_id, config.BATCH_SIZE))
         return (job_id, rows) if rows else None
 
     async def _run_job_batch(self, job_id: str, rows) -> None:

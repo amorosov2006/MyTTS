@@ -44,6 +44,8 @@ async def test_full_job_lifecycle_and_event_order(running_scheduler, sample_book
         await _wait_for(lambda: sch.get_job(info.id).status == JobStatus.done, timeout=10)
     finally:
         collector.cancel()
+    while not q.empty():  # events published just before "done" may not be collected yet
+        events.append(q.get_nowait())
     sch.bus.unsubscribe(sid)
 
     final = sch.get_job(info.id)

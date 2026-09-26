@@ -185,6 +185,27 @@ _RU_LABEL_GENDER = {"глава": "f", "часть": "f", "том": "m", "кни
 _BARE_ROMAN_RE = re.compile(r"^[IVXLCDMivxlcdm]+$")
 
 
+def expand_ru_arabic_chapter_label(text: str) -> str:
+    """"Глава 2" -> "Глава вторая" (arabic digit right after a chapter/part/
+    ...  label, at the START of the text, agreeing in gender with the
+    label). Roman numerals in the same spot ("Глава II") already get this
+    from normalize_ru's own _replace_labeled_romans, and EN's "Chapter 4"/
+    "Chapter IV" both already come out as "Chapter four" via the ordinary
+    normalize_en pipeline -- this arabic-digit/RU combination is the one gap
+    that needs a dedicated pass, used by both normalize_title (so titles are
+    read this way) and compare_form (so a QA transcript that writes the
+    title as "Глава 2" still canonicalizes to the same words as the spoken
+    "Глава вторая", instead of comparing against a plain cardinal "два").
+    """
+
+    def sub(m: re.Match) -> str:
+        label, digits = m.group(1), m.group(2)
+        gender = _RU_LABEL_GENDER[label.lower()]
+        return f"{label} {num.ru_ordinal(int(digits), gender=gender)}"
+
+    return _RU_ARABIC_LABEL_RE.sub(sub, text)
+
+
 def normalize_title(title: str, lang: Lang) -> str:
     title = title.strip()
     if not title:
@@ -194,12 +215,7 @@ def normalize_title(title: str, lang: Lang) -> str:
         if n is not None:
             return num.ru_cardinal(n) if lang == Lang.ru else _en_num2words(n)
     if lang == Lang.ru:
-        def sub(m: re.Match) -> str:
-            label, digits = m.group(1), m.group(2)
-            gender = _RU_LABEL_GENDER[label.lower()]
-            return f"{label} {num.ru_ordinal(int(digits), gender=gender)}"
-
-        title = _RU_ARABIC_LABEL_RE.sub(sub, title)
+        title = expand_ru_arabic_chapter_label(title)
         return normalize(title, Lang.ru)
     # EN: "Chapter 4" already becomes "Chapter four" via the ordinary bare-
     # cardinal pass in normalize_en, and "Chapter IV" via its roman-numeral

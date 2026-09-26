@@ -57,3 +57,41 @@ def test_compare_form_idempotent():
         once = compare_form(text, lang)
         twice = compare_form(once, lang)
         assert once == twice
+
+
+# A title read as "Глава вторая" whose ASR transcript comes back with a digit
+# ("Глава 2") must canonicalize to the same words, not a false QA failure
+# (was: "глава вторая" vs "глава два", CER ~0.29). Roman numerals and EN
+# already agreed through the ordinary normalize pipeline; only the RU
+# arabic-digit case needed a dedicated fix in compare_form.
+def test_compare_form_ru_chapter_title_arabic_digit_matches_spoken_ordinal():
+    spoken = compare_form("Глава вторая. Письмо", Lang.ru)
+    transcript = compare_form("Глава 2. Письмо.", Lang.ru)
+    assert spoken == transcript
+    assert spoken == "глава вторая письмо"
+
+
+def test_compare_form_ru_chapter_title_roman_numeral_matches_spoken_ordinal():
+    spoken = compare_form("Глава вторая. Письмо", Lang.ru)
+    transcript = compare_form("Глава II. Письмо.", Lang.ru)
+    assert spoken == transcript
+
+
+def test_compare_form_ru_part_title_arabic_digit_matches_spoken_ordinal():
+    spoken = compare_form("Часть третья. Начало", Lang.ru)
+    transcript = compare_form("Часть 3. Начало.", Lang.ru)
+    assert spoken == transcript
+
+
+def test_compare_form_en_chapter_title_already_consistent():
+    spoken = compare_form("Chapter four. The Letter", Lang.en)
+    assert spoken == compare_form("Chapter 4. The Letter.", Lang.en)
+    assert spoken == compare_form("Chapter IV. The Letter.", Lang.en)
+
+
+def test_compare_form_ru_chapter_title_digit_mismatch_still_detected():
+    # sanity check: this isn't a blanket pass -- a genuinely wrong chapter
+    # number must still register as a mismatch.
+    a = compare_form("Глава вторая. Письмо", Lang.ru)
+    b = compare_form("Глава 3. Письмо.", Lang.ru)
+    assert a != b

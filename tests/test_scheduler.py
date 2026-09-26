@@ -209,3 +209,35 @@ async def test_cannot_edit_chapters_or_settings_once_running(running_scheduler, 
         sch.update_settings(info.id, info.settings)
     with pytest.raises(ConflictError):
         await sch.start_job(info.id)
+
+
+async def test_worker_error_pauses_job_instead_of_stalling(running_scheduler, sample_book_txt):
+    sch = running_scheduler
+
+    async def broken(*a, **k):
+        raise RuntimeError("model failed to load")
+
+    sch.worker.synthesize = broken
+    info = await sch.create_job(sample_book_txt, "sample_book.txt")
+    await sch.start_job(info.id)
+    await _wait_for(lambda: sch.get_job(info.id).status == JobStatus.paused, timeout=5)
+    assert "model failed to load" in sch.get_job(info.id).error
+    assert sch._task is not None and not sch._task.done()  # dispatch loop still alive
+
+
+async def test_post_processing_failure_does_not_hang_job(running_scheduler, sample_book_txt):
+    sch = running_scheduler
+    real = sch.services.process_segment
+    calls = {"n": 0}
+
+    def flaky(raw, out, speed=1.0):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise OSError("disk full")
+        return real(raw, out, speed)
+
+    sch.services.process_segment = flaky
+    info = await sch.create_job(sample_book_txt, "sample_book.txt")
+    await sch.start_job(info.id)
+    await _wait_for(lambda: sch.get_job(info.id).status == JobStatus.done, timeout=10)
+    assert sch.store.job_segment_totals(info.id).get("failed", 0) == 1

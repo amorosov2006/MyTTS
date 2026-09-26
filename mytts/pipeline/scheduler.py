@@ -317,21 +317,28 @@ class Scheduler:
 
     async def _dispatch_loop(self) -> None:
         while not self._stopped:
-            sample_batch = self._pick_sample_batch()
-            if sample_batch is not None:
-                await self._run_sample_batch(*sample_batch)
-                continue
-            job_batch = self._pick_job_batch()
-            if job_batch is not None:
-                await self._run_job_batch(*job_batch)
-                continue
-            if self._run_queue and self.store.get_job_status(self._run_queue[0]) == JobStatus.running:
-                self._track_bg(asyncio.ensure_future(self._maybe_finish_job(self._run_queue[0])))
-            self._wakeup.clear()
             try:
-                await asyncio.wait_for(self._wakeup.wait(), timeout=_IDLE_TICK_S)
-            except asyncio.TimeoutError:
-                pass
+                await self._dispatch_once()
+            except Exception:
+                log.exception("dispatch loop error")
+                await asyncio.sleep(_IDLE_TICK_S)
+
+    async def _dispatch_once(self) -> None:
+        sample_batch = self._pick_sample_batch()
+        if sample_batch is not None:
+            await self._run_sample_batch(*sample_batch)
+            return
+        job_batch = self._pick_job_batch()
+        if job_batch is not None:
+            await self._run_job_batch(*job_batch)
+            return
+        if self._run_queue and self.store.get_job_status(self._run_queue[0]) == JobStatus.running:
+            self._track_bg(asyncio.ensure_future(self._maybe_finish_job(self._run_queue[0])))
+        self._wakeup.clear()
+        try:
+            await asyncio.wait_for(self._wakeup.wait(), timeout=_IDLE_TICK_S)
+        except asyncio.TimeoutError:
+            pass
 
     def _pick_sample_batch(self):
         srow = self.store.oldest_pending_sample()
@@ -386,6 +393,12 @@ class Scheduler:
                 self._log(job_id, "warning", f"TTS worker crashed, retrying batch (attempt {n})")
             self._wakeup.set()
             return
+        except Exception as e:
+            log.exception("synthesis failed")
+            for r in rows:
+                self.store.mark_segment_pending(job_id, r["id"])
+            self._pause_job_with_error(job_id, f"TTS error: {e}")
+            return
         self._retries.pop(job_id, None)
         elapsed = time.monotonic() - t0
         stats = self._job_stats.setdefault(job_id, {"started_at": time.monotonic(), "busy_s": 0.0})
@@ -407,10 +420,18 @@ class Scheduler:
         else:
             out_wav = self.store.processed_wav_path(job_id, seg_row["id"])
             loop = asyncio.get_running_loop()
-            duration = await loop.run_in_executor(
-                self._executor, self.services.process_segment, result.out_wav, str(out_wav),
-                settings.speed,
-            )
+            try:
+                duration = await loop.run_in_executor(
+                    self._executor, self.services.process_segment, result.out_wav, str(out_wav),
+                    settings.speed,
+                )
+            except Exception as e:
+                log.exception("post-processing failed")
+                self.store.mark_segment_failed(job_id, seg_row["id"], f"post-processing: {e}")
+                self._log(job_id, "warning", f"segment {seg_row['id']} post-processing failed: {e}")
+                self._update_progress(job_id)
+                await self._maybe_finish_chapter(job_id, seg_row["chapter"], settings)
+                return
             self.store.mark_segment_done(job_id, seg_row["id"], str(out_wav), duration, result.cer,
                                           result.transcript)
             self.bus.publish(Event(type="segment", job_id=job_id, data={
@@ -471,10 +492,19 @@ class Scheduler:
         loop = asyncio.get_running_loop()
         duration = 0.0
         if seg_list:
-            duration = await loop.run_in_executor(self._executor, functools.partial(
-                self.services.assemble, seg_list, str(out_path), fmt="mp3", bitrate=settings.bitrate,
-                tags=tags, cover=cover, loudness_lufs=config.LOUDNESS_LUFS,
-            ))
+            try:
+                duration = await loop.run_in_executor(self._executor, functools.partial(
+                    self.services.assemble, seg_list, str(out_path), fmt="mp3",
+                    bitrate=settings.bitrate, tags=tags, cover=cover,
+                    loudness_lufs=config.LOUDNESS_LUFS,
+                ))
+            except Exception as e:
+                log.exception("chapter assembly failed")
+                self.store.update_chapter_state(job_id, chapter, status="failed")
+                self._log(job_id, "error", f"chapter {chapter_num} assembly failed: {e}")
+                self._publish_job(job_id, force=True)
+                await self._maybe_finish_job(job_id)
+                return
             self.store.set_chapter_file(job_id, chapter, str(out_path))
         self.store.update_chapter_state(
             job_id, chapter, status="done", duration_s=duration,
@@ -521,10 +551,14 @@ class Scheduler:
                 tags = {"title": book["title"], "album": book["title"],
                         "artist": book.get("author") or "", "track": 1, "total": 1}
                 loop = asyncio.get_running_loop()
-                await loop.run_in_executor(self._executor, functools.partial(
-                    self.services.build_m4b, entries, str(m4b_path), tags=tags, cover=cover,
-                    bitrate=settings.bitrate,
-                ))
+                try:
+                    await loop.run_in_executor(self._executor, functools.partial(
+                        self.services.build_m4b, entries, str(m4b_path), tags=tags, cover=cover,
+                        bitrate=settings.bitrate,
+                    ))
+                except Exception as e:
+                    log.exception("m4b build failed")
+                    self._log(job_id, "error", f"M4B build failed (chapter MP3s are fine): {e}")
         self.store.update_job(job_id, status=JobStatus.done, output_path=str(out_dir))
         self._run_queue = [j for j in self._run_queue if j != job_id]
         self._job_stats.pop(job_id, None)
@@ -550,10 +584,12 @@ class Scheduler:
         try:
             async with self.worker_lock:
                 results = await self.worker.synthesize(items, voice, settings.params, qa=settings.qa)
-        except WorkerCrashed:
+        except Exception as e:
+            log.exception("sample synthesis failed")
             for r in rows:
                 self.store.mark_sample_segment_failed(sample_id, r["id"])
-            self.store.update_sample(sample_id, status="failed", error="TTS worker crashed")
+            reason = "TTS worker crashed" if isinstance(e, WorkerCrashed) else f"TTS error: {e}"
+            self.store.update_sample(sample_id, status="failed", error=reason)
             self._publish_sample(sample_id)
             self._wakeup.set()
             return
@@ -569,10 +605,18 @@ class Scheduler:
         else:
             out_wav = self.store.processed_sample_wav_path(job_id, sample_id, seg_row["id"])
             loop = asyncio.get_running_loop()
-            duration = await loop.run_in_executor(
-                self._executor, self.services.process_segment, result.out_wav, str(out_wav),
-                settings.speed,
-            )
+            try:
+                duration = await loop.run_in_executor(
+                    self._executor, self.services.process_segment, result.out_wav, str(out_wav),
+                    settings.speed,
+                )
+            except Exception:
+                log.exception("sample post-processing failed")
+                self.store.mark_sample_segment_failed(sample_id, seg_row["id"])
+                self._publish_sample(sample_id)
+                if self.store.sample_segments_pending_count(sample_id) == 0:
+                    await self._finish_sample(sample_id, job_id, settings)
+                return
             self.store.mark_sample_segment_done(sample_id, seg_row["id"], str(out_wav), duration)
             url = f"/api/jobs/{job_id}/samples/{sample_id}/segments/{seg_row['id']}/audio"
             self.store.append_sample_segment_url(sample_id, url)
@@ -592,10 +636,16 @@ class Scheduler:
         tags = {"title": "Sample", "album": book.get("title", ""), "artist": book.get("author") or "",
                 "track": 1, "total": 1}
         loop = asyncio.get_running_loop()
-        duration = await loop.run_in_executor(self._executor, functools.partial(
-            self.services.assemble, seg_list, str(out_path), fmt="mp3", bitrate=settings.bitrate,
-            tags=tags, cover=None, loudness_lufs=config.LOUDNESS_LUFS,
-        ))
+        try:
+            duration = await loop.run_in_executor(self._executor, functools.partial(
+                self.services.assemble, seg_list, str(out_path), fmt="mp3",
+                bitrate=settings.bitrate, tags=tags, cover=None, loudness_lufs=config.LOUDNESS_LUFS,
+            ))
+        except Exception as e:
+            log.exception("sample assembly failed")
+            self.store.update_sample(sample_id, status="failed", error=f"assembly failed: {e}")
+            self._publish_sample(sample_id)
+            return
         self.store.update_sample(sample_id, status="done", duration_s=duration,
                                   audio_url=f"/api/jobs/{job_id}/samples/{sample_id}/audio")
         self._publish_sample(sample_id)

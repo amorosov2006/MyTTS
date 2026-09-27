@@ -217,6 +217,10 @@ let designingVoice = false;
 
 function defaultSettings(lang) {
   return {
+    engine: "local",
+    gemini_voice: "",
+    gemini_model: "",
+    gemini_style: "",
     voice_id: lang === "ru" ? "ru_male" : "en_male",
     lang: null,
     speed: 1.0,
@@ -233,6 +237,59 @@ function defaultSettings(lang) {
 }
 
 const outputDirDefault = path.join(os.homedir(), "Audiobooks");
+
+// ----------------------------------------------------------------------- engines / Gemini
+// Mirrors mytts/config.py and mytts/tts/gemini.py so the mock UI is representative.
+
+const GEMINI_MODELS = [
+  { id: "gemini-3.8-flash-tts", label: "Gemini 3.8 Flash TTS — best quality", usd_per_m_audio_tokens: 9.0, free_tier: false },
+  { id: "gemini-3.8-flash-lite-tts", label: "Gemini 3.8 Flash-Lite TTS — cheaper, faster", usd_per_m_audio_tokens: 6.0, free_tier: false },
+  { id: "gemini-2.5-flash-preview-tts", label: "Gemini 2.5 Flash TTS (preview) — has a free tier", usd_per_m_audio_tokens: 10.0, free_tier: true },
+];
+const GEMINI_DEFAULT_MODEL = "gemini-3.8-flash-tts";
+const GEMINI_AUDIO_TOKENS_PER_S = 25;
+const GEMINI_INPUT_USD_PER_M = 0.5;
+const GEMINI_DEFAULT_VOICE = { ru: "Charon", en: "Charon" };
+const GEMINI_DEFAULT_STYLE = {
+  ru: "Спокойное, тёплое, выразительное чтение аудиокниги профессиональным диктором.",
+  en: "Calm, warm, expressive audiobook narration by a professional narrator.",
+};
+// name -> [Google's one-word style, gender]
+const GEMINI_VOICES = {
+  Zephyr: ["Bright", "female"], Puck: ["Upbeat", "male"], Charon: ["Informative", "male"],
+  Kore: ["Firm", "female"], Fenrir: ["Excitable", "male"], Leda: ["Youthful", "female"],
+  Orus: ["Firm", "male"], Aoede: ["Breezy", "female"], Callirrhoe: ["Easy-going", "female"],
+  Autonoe: ["Bright", "female"], Enceladus: ["Breathy", "male"], Iapetus: ["Clear", "male"],
+  Umbriel: ["Easy-going", "male"], Algieba: ["Smooth", "male"], Despina: ["Smooth", "female"],
+  Erinome: ["Clear", "female"], Algenib: ["Gravelly", "male"], Rasalgethi: ["Informative", "male"],
+  Laomedeia: ["Upbeat", "female"], Achernar: ["Soft", "female"], Alnilam: ["Firm", "male"],
+  Schedar: ["Even", "male"], Gacrux: ["Mature", "female"], Pulcherrima: ["Forward", "female"],
+  Achird: ["Friendly", "male"], Zubenelgenubi: ["Casual", "male"],
+  Vindemiatrix: ["Gentle", "female"], Sadachbia: ["Lively", "male"],
+  Sadaltager: ["Knowledgeable", "male"], Sulafat: ["Warm", "female"],
+};
+
+const MOCK_GEMINI_KEY = "test-key";
+/** @type {{ value: string } | null} */
+let geminiKey = null;
+
+function geminiKeyStatus() {
+  return { configured: !!geminiKey, last4: geminiKey ? geminiKey.value.slice(-4) : null, source: geminiKey ? "file" : null };
+}
+
+function engineList() {
+  return [
+    { id: "local", name: "Qwen3-TTS on this Mac", offline: true, available: true },
+    {
+      id: "gemini", name: "Google Gemini TTS (cloud)", offline: false,
+      available: geminiKeyStatus().configured, key: geminiKeyStatus(),
+      default_model: GEMINI_DEFAULT_MODEL, models: GEMINI_MODELS,
+      usd_per_m_input_tokens: GEMINI_INPUT_USD_PER_M, audio_tokens_per_second: GEMINI_AUDIO_TOKENS_PER_S,
+      default_voice: GEMINI_DEFAULT_VOICE, default_style: GEMINI_DEFAULT_STYLE,
+      voices: Object.entries(GEMINI_VOICES).map(([n, [style, gender]]) => ({ id: n, name: n, style, gender })),
+    },
+  ];
+}
 
 // ----------------------------------------------------------------------- jobs
 
@@ -583,6 +640,44 @@ const server = http.createServer(async (req, res) => {
       if (v.builtin) return sendJson(res, 403, { detail: "Built-in voices cannot be deleted." });
       voices.delete(m[1]);
       res.writeHead(204); return res.end();
+    }
+
+    // -------- engines / Gemini
+    if (method === "GET" && p === "/api/engines") {
+      return sendJson(res, 200, engineList());
+    }
+
+    if (method === "GET" && p === "/api/keys/gemini") {
+      return sendJson(res, 200, geminiKeyStatus());
+    }
+
+    if (method === "PUT" && p === "/api/keys/gemini") {
+      const body = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+      const key = (body.api_key || "").trim();
+      if (!key) return sendJson(res, 422, { detail: "Empty key" });
+      if (key !== MOCK_GEMINI_KEY) {
+        return sendJson(res, 400, { detail: "API key not valid. Please pass a valid API key." });
+      }
+      geminiKey = { value: key };
+      return sendJson(res, 200, geminiKeyStatus());
+    }
+
+    if (method === "DELETE" && p === "/api/keys/gemini") {
+      geminiKey = null;
+      res.writeHead(204); return res.end();
+    }
+
+    if (method === "POST" && p === "/api/engines/gemini/preview") {
+      const body = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+      if (!geminiKeyStatus().configured) return sendJson(res, 400, { detail: "No Gemini API key configured." });
+      const voiceMeta = GEMINI_VOICES[body.voice];
+      if (!voiceMeta) return sendJson(res, 404, { detail: "unknown Gemini voice" });
+      const model = body.model || GEMINI_DEFAULT_MODEL;
+      if (!GEMINI_MODELS.some((m) => m.id === model)) return sendJson(res, 422, { detail: "unknown Gemini model" });
+      const lang = body.lang === "en" ? "en" : "ru";
+      const ref = builtinRefFor(lang, voiceMeta[1]);
+      if (!ref || !ref.refPath) return sendJson(res, 404, { detail: "no sample audio available" });
+      return sendFile(res, ref.refPath, ref.mime || "audio/wav", req);
     }
 
     // -------- jobs

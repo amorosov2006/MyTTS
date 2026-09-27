@@ -6,6 +6,13 @@ MyTTS turns a book into an audiobook with one audio file per chapter. It runs en
 - **Languages:** Russian and English. Books that mix the two are handled paragraph by paragraph.
 - **Interface:** a local web app. You pick a book, a voice and a style, listen to a **sample from the middle of the book**, then convert. You can play chapters while the rest of the book is still being generated.
 
+## Optional: Google Gemini TTS (cloud)
+
+Any book can be switched to Google's Gemini TTS, which gives very lifelike voices; its text is then sent to Google.
+
+- Setup, pricing and privacy: [docs/GEMINI.md](docs/GEMINI.md).
+- The local engine stays the default, and nothing leaves your Mac unless you choose Gemini for a book.
+
 ## Requirements
 
 - An Apple Silicon Mac. It was developed on an M5 Pro with 48 GB. Machines with 16 GB or more should work, since the worker uses about 10 GB.

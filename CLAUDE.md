@@ -16,7 +16,7 @@ MyTTS is an offline book-to-audiobook converter: Qwen3-TTS 1.7B running on MLX o
 2. **Only the lead runs real-model (GPU) code during parallel phases.** Implementer agents test with `mytts.tts.fake.FakeEngine` / `FakeVerifier`.
    - The exception is an agent explicitly assigned the engine. It runs `pytest -m gpu` under memguard and one process at a time.
 3. **Do not edit `mytts/contracts.py`, `mytts/config.py` or `docs/API.md`.** Put any change you need in your final report instead.
-4. **Offline at runtime.** No network calls in app code. Models load from `MYTTS_MODELS_DIR`.
+4. **Offline at runtime.** No network calls in app code. The only exception is the opt-in Gemini cloud engine: `mytts/tts/gemini.py` may call Google, and only for a book whose engine is `gemini` or for an explicit Gemini voice preview. Models load from `MYTTS_MODELS_DIR`.
    - That defaults to `<repo>/models`, which is gitignored.
    - **In a git worktree, export `MYTTS_MODELS_DIR=/Users/anatolius/Projects/MyTTS/models`.**
 5. **Commands:**

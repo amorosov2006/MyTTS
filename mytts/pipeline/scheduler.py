@@ -22,10 +22,11 @@ from typing import Optional
 
 from mytts import config
 from mytts.contracts import (
-    Book, Chapter, Event, JobInfo, JobSettings, JobStatus, Lang, OutputFormat, Progress,
+    Book, Chapter, EngineName, Event, JobInfo, JobSettings, JobStatus, Lang, OutputFormat, Progress,
     SampleInfo, SampleRequest, Segment, SynthesisItem, SynthesisResult, TTSWorker,
     WorkerCrashed,
 )
+from mytts.pipeline.cloud_worker import gemini_voice
 from mytts.pipeline.events import EventBus
 from mytts.pipeline.services import Services
 from mytts.pipeline.store import Store, new_id, sanitize_filename
@@ -37,6 +38,10 @@ MAX_BATCH_RETRIES = 3
 FALLBACK_CHARS_PER_S = 14.0
 FALLBACK_REALTIME_X = 8.0
 _IDLE_TICK_S = 1.0
+
+
+class VoiceMissing(Exception):
+    pass
 
 
 class NotFoundError(Exception):
@@ -74,7 +79,8 @@ def _exit_with_parent(parent_pid: int) -> None:
 class Scheduler:
     def __init__(self, store: Store, services: Services, bus: EventBus, worker: TTSWorker,
                  voices: Optional[VoiceRegistry] = None, executor: Optional[Executor] = None,
-                 max_cpu_workers: int = 3):
+                 max_cpu_workers: int = 3, cloud_worker: Optional[TTSWorker] = None):
+        self.cloud_worker = cloud_worker  # Gemini (optional); `worker` is the local GPU engine
         self.store = store
         self.services = services
         self.bus = bus
@@ -249,6 +255,7 @@ class Scheduler:
                 read_title=info.settings.read_titles, skip_footnotes=info.settings.skip_footnotes,
                 pause_sentence_ms=info.settings.pause_sentence_ms,
                 pause_paragraph_ms=info.settings.pause_paragraph_ms,
+                **self._segment_sizes(info.settings),
             )
             if segments:
                 self.store.add_segments(job_id, cm.index, segments)
@@ -341,7 +348,7 @@ class Scheduler:
         segments = await asyncio.to_thread(
             self.services.prepare_chapter, chapter, lang, read_title=False,
             skip_footnotes=settings.skip_footnotes, pause_sentence_ms=settings.pause_sentence_ms,
-            pause_paragraph_ms=settings.pause_paragraph_ms,
+            pause_paragraph_ms=settings.pause_paragraph_ms, **self._segment_sizes(settings),
         )
         if not segments:
             raise ConflictError("Nothing to read in the sample text")
@@ -422,10 +429,38 @@ class Scheduler:
         rows = _same_lang_prefix(self.store.next_pending_segments(job_id, config.BATCH_SIZE))
         return (job_id, rows) if rows else None
 
+    def _engine_for(self, settings: JobSettings, lang: Lang):
+        """(worker, voice, params, needs_gpu_lock) for a batch in `lang`. voice is None if the
+        local voice doesn't exist."""
+        if settings.engine == EngineName.gemini:
+            if self.cloud_worker is None:
+                raise RuntimeError("The Gemini engine is not available in this app instance")
+            name = settings.gemini_voice or config.GEMINI_DEFAULT_VOICE[lang.value]
+            model = settings.gemini_model or config.GEMINI_MODEL
+            style = settings.gemini_style or config.GEMINI_DEFAULT_STYLE[lang.value]
+            params = settings.params.model_copy(update={"instruction": style})
+            return self.cloud_worker, gemini_voice(name, lang, model), params, False
+        return self.worker, self.voices.get(settings.voice_id), settings.params, True
+
+    async def _synthesize(self, settings: JobSettings, items: list[SynthesisItem]):
+        worker, voice, params, gpu = self._engine_for(settings, items[0].lang)
+        if voice is None:
+            raise VoiceMissing(f"voice not found: {settings.voice_id}")
+        if gpu:
+            async with self.worker_lock:
+                return await worker.synthesize(items, voice, params, qa=settings.qa)
+        return await worker.synthesize(items, voice, params, qa=settings.qa)
+
+    @staticmethod
+    def _segment_sizes(settings: JobSettings) -> dict:
+        if settings.engine == EngineName.gemini:
+            return {"target_chars": config.GEMINI_SEGMENT_TARGET_CHARS,
+                    "max_chars": config.GEMINI_SEGMENT_MAX_CHARS}
+        return {}
+
     async def _run_job_batch(self, job_id: str, rows) -> None:
         settings = self.store.get_job_settings(job_id)
-        voice = self.voices.get(settings.voice_id)
-        if voice is None:
+        if settings.engine == EngineName.local and self.voices.get(settings.voice_id) is None:
             self._pause_job_with_error(job_id, f"voice not found: {settings.voice_id}")
             return
         for r in rows:
@@ -438,8 +473,7 @@ class Scheduler:
         ]
         t0 = time.monotonic()
         try:
-            async with self.worker_lock:
-                results = await self.worker.synthesize(items, voice, settings.params, qa=settings.qa)
+            results = await self._synthesize(settings, items)
         except WorkerCrashed:
             for r in rows:
                 self.store.mark_segment_pending(job_id, r["id"])
@@ -672,8 +706,7 @@ class Scheduler:
         srow = self.store.get_sample(sample_id)
         job_id = srow["job_id"]
         settings = JobSettings.model_validate_json(srow["settings"])
-        voice = self.voices.get(settings.voice_id)
-        if voice is None:
+        if settings.engine == EngineName.local and self.voices.get(settings.voice_id) is None:
             self.store.update_sample(sample_id, status="failed", error=f"voice not found: {settings.voice_id}")
             self._publish_sample(sample_id)
             return
@@ -685,8 +718,7 @@ class Scheduler:
             for r in rows
         ]
         try:
-            async with self.worker_lock:
-                results = await self.worker.synthesize(items, voice, settings.params, qa=settings.qa)
+            results = await self._synthesize(settings, items)
         except Exception as e:
             log.exception("sample synthesis failed")
             for r in rows:

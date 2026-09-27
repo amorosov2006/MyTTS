@@ -89,3 +89,33 @@ data: {"type":"segment","job_id":"j_abc","data":{"segment_id":"c003s0012","chapt
 - **Chapter order:** segments are generated in chapter order (ascending `index` within a chapter), so chapter N+1 starts only after chapter N is fully queued.
   - A `chapter` event with `status: "done"` and an `audio_url` follows once the chapter's MP3 has been assembled.
 - **Playing while generating:** the UI plays segments of the current chapter in order via their `url`s, inserting `pause_after_ms` of silence between them. When the chapter's final `audio_url` arrives, the UI switches to it.
+
+## Engines and Google Gemini (optional cloud engine)
+
+MyTTS is offline by default. Google Gemini TTS is used only for a book whose `JobSettings.engine == "gemini"`, and for explicit Gemini voice previews. In both cases the book text is sent to Google.
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/api/engines` | — | `[{id:"local",...}, {id:"gemini", available, key:{configured,last4,source}, default_model, models:[{id,label,usd_per_m_audio_tokens,free_tier}], usd_per_m_input_tokens, audio_tokens_per_second, default_voice:{ru,en}, default_style:{ru,en}, voices:[{id,name,style,gender}]}]` |
+| GET | `/api/keys/gemini` | — | `{configured, last4, source: "file"\|"GEMINI_API_KEY"\|"GOOGLE_API_KEY"\|null}` |
+| PUT | `/api/keys/gemini` | `{api_key}` | Validated with Google first. Returns `200` status, `400 {detail}` if the key is rejected, or `502` if Google is unreachable |
+| DELETE | `/api/keys/gemini` | — | `204` |
+| POST | `/api/engines/gemini/preview` | `{voice, lang, style?, model?}` | `audio/wav`: one short sentence, cached on disk. Errors: `400` if the key is missing or bad, `404` for an unknown voice, `502` for a Google error |
+
+**API key handling:** the key is stored in `<DATA_DIR>/secrets.json` with mode 0600, or read from the environment. It is never returned to the browser.
+
+**JobSettings fields for this engine:**
+
+| Field | Values | Empty means |
+|---|---|---|
+| `engine` | `"local"` \| `"gemini"` | — |
+| `gemini_voice` | a prebuilt voice name | default for the language |
+| `gemini_model` | a model id | the default model |
+| `gemini_style` | natural-language style prompt, sent as `speech_metadata.style` | default narrator style for the language |
+
+**Behavior differences with Gemini:**
+- **Segments are larger** (~700 chars, at most 1400), so a paragraph is read with natural flow and fewer requests are needed.
+- **The Whisper QA check isn't used.** Instead, each segment's audio length is checked against its text length, with one retry if it looks wrong.
+- **A rejected key or missing billing pauses the job** and shows Google's message.
+
+**Estimating the cost:** audio seconds ≈ chars / 14; tokens = seconds × `audio_tokens_per_second`; cost ≈ tokens / 1e6 × `usd_per_m_audio_tokens`. Input text tokens are negligible.

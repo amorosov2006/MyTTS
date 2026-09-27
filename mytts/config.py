@@ -59,3 +59,26 @@ LOUDNESS_LUFS = -18.0
 PAUSE_SENTENCE_MS = 250   # between segments inside a paragraph
 PAUSE_PARAGRAPH_MS = 700
 PAUSE_CHAPTER_TITLE_MS = 1200
+
+
+# --- Google Gemini TTS (optional cloud engine; off unless a job selects it)
+GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
+GEMINI_MODEL = os.environ.get("MYTTS_GEMINI_MODEL", "gemini-3.8-flash-tts")
+GEMINI_MODELS = {  # id: (label, USD per 1M output audio tokens through 2026-12-31, free tier)
+    "gemini-3.8-flash-tts": ("Gemini 3.8 Flash TTS — best quality", 9.00, False),
+    "gemini-3.8-flash-lite-tts": ("Gemini 3.8 Flash-Lite TTS — cheaper, faster", 6.00, False),
+    "gemini-2.5-flash-preview-tts": ("Gemini 2.5 Flash TTS (preview) — has a free tier", 10.00, True),
+}
+GEMINI_INPUT_USD_PER_M = 0.50
+GEMINI_AUDIO_TOKENS_PER_S = 25
+GEMINI_CONCURRENCY = int(os.environ.get("MYTTS_GEMINI_CONCURRENCY", "4"))
+GEMINI_TIMEOUT_S = 120
+GEMINI_MAX_RETRIES = 5
+# Larger segments than the local model: a paragraph reads with better flow and costs fewer requests
+GEMINI_SEGMENT_TARGET_CHARS = 700
+GEMINI_SEGMENT_MAX_CHARS = 1400
+GEMINI_DEFAULT_STYLE = {
+    "ru": "Спокойное, тёплое, выразительное чтение аудиокниги профессиональным диктором.",
+    "en": "Calm, warm, expressive audiobook narration by a professional narrator.",
+}
+GEMINI_DEFAULT_VOICE = {"ru": "Charon", "en": "Charon"}

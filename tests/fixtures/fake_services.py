@@ -52,7 +52,8 @@ def fake_detect_lang(text: str) -> Lang:
 
 def fake_prepare_chapter(chapter: Chapter, lang: Lang, *, read_title: bool = True,
                          skip_footnotes: bool = True, pause_sentence_ms: int = 250,
-                         pause_paragraph_ms: int = 700) -> list[Segment]:
+                         pause_paragraph_ms: int = 700, target_chars: int = 220,
+                         max_chars: int = 350) -> list[Segment]:
     segments: list[Segment] = []
     idx = 0
     ci = max(chapter.index, 0)

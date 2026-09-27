@@ -21,7 +21,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from mytts import config
 from mytts.contracts import (
-    Event, IngestError, JobSettings, Lang, SampleRequest, TTSWorker,
+    Event, IngestError, JobSettings, Lang, SampleRequest, SynthesisItem, SynthesisParams, TTSWorker,
 )
 from mytts.pipeline.events import EventBus
 from mytts.pipeline.scheduler import ConflictError, NotFoundError, Scheduler
@@ -65,9 +65,21 @@ class VoiceDesignRequest(BaseModel):
     gender: Optional[str] = None
 
 
+class GeminiKeyBody(BaseModel):
+    api_key: str
+
+
+class GeminiPreviewBody(BaseModel):
+    voice: str
+    lang: Lang = Lang.ru
+    style: str = ""
+    model: str = ""
+
+
 def create_app(services: Optional[Services] = None, worker: Optional[TTSWorker] = None,
                data_dir: Optional[Path] = None,
-               allowed_hosts: Optional[list[str]] = None) -> FastAPI:
+               allowed_hosts: Optional[list[str]] = None,
+               cloud_worker: Optional[TTSWorker] = None) -> FastAPI:
     if data_dir is not None:
         data_dir = Path(data_dir)
         data_dir.mkdir(parents=True, exist_ok=True)
@@ -84,7 +96,10 @@ def create_app(services: Optional[Services] = None, worker: Optional[TTSWorker] 
     store = Store()
     bus = EventBus()
     voices = VoiceRegistry()
-    scheduler = Scheduler(store, services, bus, worker, voices=voices)
+    if cloud_worker is None:
+        from mytts.pipeline.cloud_worker import GeminiWorker
+        cloud_worker = GeminiWorker()  # makes no network call until a job/preview uses it
+    scheduler = Scheduler(store, services, bus, worker, voices=voices, cloud_worker=cloud_worker)
     bg_tasks: set[asyncio.Task] = set()
 
     def _track(task: "asyncio.Task") -> None:
@@ -191,6 +206,87 @@ def create_app(services: Optional[Services] = None, worker: Optional[TTSWorker] 
 
         path = await asyncio.to_thread(_run, body.start)
         return {"path": path}
+
+    # ---------------------------------------------------------------- engines / Gemini
+
+    _PREVIEW_TEXT = {
+        "ru": "Здравствуйте. Так будет звучать ваша книга, прочитанная этим голосом.",
+        "en": "Hello. This is how your book will sound, read in this voice.",
+    }
+
+    @app.get("/api/engines")
+    async def engines():
+        from mytts import keystore
+        from mytts.tts.gemini import VOICES
+        return [
+            {"id": "local", "name": "Qwen3-TTS on this Mac", "offline": True, "available": True},
+            {"id": "gemini", "name": "Google Gemini TTS (cloud)", "offline": False,
+             "available": keystore.gemini_key_status()["configured"],
+             "key": keystore.gemini_key_status(),
+             "default_model": config.GEMINI_MODEL,
+             "models": [{"id": m, "label": lbl, "usd_per_m_audio_tokens": usd, "free_tier": free}
+                        for m, (lbl, usd, free) in config.GEMINI_MODELS.items()],
+             "usd_per_m_input_tokens": config.GEMINI_INPUT_USD_PER_M,
+             "audio_tokens_per_second": config.GEMINI_AUDIO_TOKENS_PER_S,
+             "default_voice": config.GEMINI_DEFAULT_VOICE,
+             "default_style": config.GEMINI_DEFAULT_STYLE,
+             "voices": [{"id": n, "name": n, "style": st, "gender": g} for n, (st, g) in VOICES.items()]},
+        ]
+
+    @app.get("/api/keys/gemini")
+    async def gemini_key_status():
+        from mytts import keystore
+        return keystore.gemini_key_status()
+
+    @app.put("/api/keys/gemini")
+    async def set_gemini_key(body: GeminiKeyBody):
+        from mytts import keystore
+        from mytts.tts.gemini import GeminiError
+        key = body.api_key.strip()
+        if not key:
+            raise HTTPException(422, "Empty key")
+        try:
+            await cloud_worker.check_key(key)
+        except GeminiError as e:
+            raise HTTPException(400, str(e))
+        except Exception as e:  # network down etc.
+            raise HTTPException(502, f"Could not reach Google to verify the key: {e}")
+        keystore.set_gemini_key(key)
+        return keystore.gemini_key_status()
+
+    @app.delete("/api/keys/gemini", status_code=204)
+    async def delete_gemini_key():
+        from mytts import keystore
+        keystore.delete_gemini_key()
+        return Response(status_code=204)
+
+    @app.post("/api/engines/gemini/preview")
+    async def gemini_preview(body: GeminiPreviewBody):
+        """A short sentence in a Gemini voice (one API request), cached on disk."""
+        import hashlib
+        from mytts.tts.gemini import VOICES, GeminiAuthError, GeminiError
+        if body.voice not in VOICES:
+            raise HTTPException(404, "unknown Gemini voice")
+        model = body.model or config.GEMINI_MODEL
+        if model not in config.GEMINI_MODELS:
+            raise HTTPException(422, "unknown Gemini model")
+        style = body.style or config.GEMINI_DEFAULT_STYLE[body.lang.value]
+        key = hashlib.sha256(f"{model}|{body.voice}|{body.lang.value}|{style}".encode()).hexdigest()[:24]
+        path = config.DATA_DIR / "gemini_previews" / f"{key}.wav"
+        if not path.exists():
+            from mytts.pipeline.cloud_worker import gemini_voice
+            path.parent.mkdir(parents=True, exist_ok=True)
+            item = SynthesisItem(segment_id="preview", text=_PREVIEW_TEXT[body.lang.value],
+                                 lang=body.lang, out_wav=str(path))
+            params = SynthesisParams(instruction=style)
+            try:
+                res = await cloud_worker.synthesize([item], gemini_voice(body.voice, body.lang, model),
+                                                    params, qa=False)
+            except (RuntimeError, GeminiError) as e:
+                raise HTTPException(400 if isinstance(e, GeminiAuthError) else 502, str(e))
+            if not res[0].ok:
+                raise HTTPException(502, res[0].error or "Gemini preview failed")
+        return FileResponse(path, media_type="audio/wav")
 
     @app.get("/api/formats")
     async def formats():

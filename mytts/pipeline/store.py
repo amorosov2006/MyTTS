@@ -111,6 +111,7 @@ CREATE INDEX IF NOT EXISTS idx_sample_segments_pending ON sample_segments (statu
 
 # Fields whose change invalidates an approved sample (PLAN §9 / API.md).
 AUDIBLE_SETTINGS_FIELDS = (
+    "engine", "gemini_voice", "gemini_model", "gemini_style",
     "voice_id", "lang", "speed", "params", "pause_sentence_ms", "pause_paragraph_ms",
     "skip_footnotes", "qa",
 )

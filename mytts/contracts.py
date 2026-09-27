@@ -24,6 +24,11 @@ class Lang(str, Enum):
     en = "en"
 
 
+class EngineName(str, Enum):
+    local = "local"     # Qwen3-TTS on this Mac (MLX, fully offline) — the default
+    gemini = "gemini"   # Google Gemini TTS (cloud; needs an API key; book text is sent to Google)
+
+
 # ----------------------------------------------------------------------------- ingest
 
 class Chapter(BaseModel):
@@ -79,7 +84,10 @@ class Segment(BaseModel):
 #   def prepare_chapter(chapter: Chapter, lang: Lang, *, read_title: bool = True,
 #                       skip_footnotes: bool = True,
 #                       pause_sentence_ms: int = config.PAUSE_SENTENCE_MS,
-#                       pause_paragraph_ms: int = config.PAUSE_PARAGRAPH_MS) -> list[Segment]
+#                       pause_paragraph_ms: int = config.PAUSE_PARAGRAPH_MS,
+#                       target_chars: int = config.SEGMENT_TARGET_CHARS,
+#                       max_chars: int = config.SEGMENT_MAX_CHARS) -> list[Segment]
+#        (the cloud engine uses larger segments: config.GEMINI_SEGMENT_*)
 #        Paragraphs detected as the other language get that Segment.lang (mixed-language books).
 #        Title segment (is_title=True) gets config.PAUSE_CHAPTER_TITLE_MS.
 #   def compare_form(text: str, lang: Lang) -> str               canonical form for QA scoring:
@@ -106,6 +114,7 @@ class SynthesisParams(BaseModel):
     temperature: float = 0.8          # "expressiveness" in the UI (0.5 flat .. 1.0 lively)
     top_p: float = 1.0
     repetition_penalty: float = 1.05
+    instruction: str = ""             # natural-language style prompt (cloud engines only)
 
 
 class EngineOutput(BaseModel):
@@ -201,7 +210,11 @@ class OutputFormat(str, Enum):
 
 
 class JobSettings(BaseModel):
-    voice_id: str = "ru_male"
+    engine: EngineName = EngineName.local
+    gemini_voice: str = ""            # prebuilt Gemini voice name ("" = default for the language)
+    gemini_model: str = ""            # "" = config.GEMINI_MODEL
+    gemini_style: str = ""            # "" = config.GEMINI_DEFAULT_STYLE[lang]
+    voice_id: str = "ru_male"         # local engine voice
     lang: Optional[Lang] = None       # None = use Book.lang (detected)
     speed: float = Field(1.0, ge=0.7, le=1.5)     # post-processing tempo (ffmpeg atempo)
     params: SynthesisParams = SynthesisParams()

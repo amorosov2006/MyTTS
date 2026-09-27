@@ -239,6 +239,8 @@ def prepare_chapter(
     skip_footnotes: bool = True,
     pause_sentence_ms: int = _DEFAULT_PAUSE_SENTENCE_MS,
     pause_paragraph_ms: int = _DEFAULT_PAUSE_PARAGRAPH_MS,
+    target_chars: int = SEGMENT_TARGET_CHARS,
+    max_chars: int = SEGMENT_MAX_CHARS,
 ) -> list[Segment]:
     segments: list[Segment] = []
     index = 0
@@ -268,11 +270,11 @@ def prepare_chapter(
             continue
 
         seg_lang = _segment_lang(text, lang)
-        pairs = _prepare_sentence_pairs(text, seg_lang, SEGMENT_MAX_CHARS)
+        pairs = _prepare_sentence_pairs(text, seg_lang, max_chars)
         if not pairs:
             continue
-        packed = _pack_pairs(pairs, SEGMENT_TARGET_CHARS, SEGMENT_MAX_CHARS)
-        packed = _merge_tiny_pairs(packed, SEGMENT_MAX_CHARS, _MIN_FRAGMENT_CHARS)
+        packed = _pack_pairs(pairs, target_chars, max_chars)
+        packed = _merge_tiny_pairs(packed, max_chars, _MIN_FRAGMENT_CHARS)
 
         for i, (src, txt) in enumerate(packed):
             is_last = i == len(packed) - 1

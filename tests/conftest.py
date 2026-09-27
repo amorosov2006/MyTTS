@@ -7,6 +7,11 @@ _TEST_HOME = tempfile.mkdtemp(prefix="mytts-tests-")
 for _var, _sub in (("MYTTS_DATA_DIR", "data"), ("MYTTS_USER_VOICES_DIR", "voices"),
                    ("MYTTS_OUTPUT_DIR", "out")):
     os.environ[_var] = os.path.join(_TEST_HOME, _sub)
+# ...and never the user's real Google credentials (gcloud ADC / API keys).
+os.environ["CLOUDSDK_CONFIG"] = os.path.join(_TEST_HOME, "gcloud")
+os.environ.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
+for _var in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_CLOUD_PROJECT"):
+    os.environ.pop(_var, None)
 
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path

@@ -216,16 +216,16 @@ def create_app(services: Optional[Services] = None, worker: Optional[TTSWorker] 
 
     @app.get("/api/engines")
     async def engines():
-        from mytts import keystore
+        from mytts.tts import gemini as gemini_mod
         from mytts.tts.gemini import VOICES
         return [
             {"id": "local", "name": "Qwen3-TTS on this Mac", "offline": True, "available": True},
             {"id": "gemini", "name": "Google Gemini TTS (cloud)", "offline": False,
-             "available": keystore.gemini_key_status()["configured"],
-             "key": keystore.gemini_key_status(),
-             "default_model": config.GEMINI_MODEL,
+             "available": (conn := gemini_mod.connection_status())["configured"],
+             "key": conn,
+             "default_model": gemini_mod.default_model(conn["method"]),
              "models": [{"id": m, "label": lbl, "usd_per_m_audio_tokens": usd, "free_tier": free}
-                        for m, (lbl, usd, free) in config.GEMINI_MODELS.items()],
+                        for m, (lbl, usd, free) in gemini_mod.models_for(conn["method"]).items()],
              "usd_per_m_input_tokens": config.GEMINI_INPUT_USD_PER_M,
              "audio_tokens_per_second": config.GEMINI_AUDIO_TOKENS_PER_S,
              "default_voice": config.GEMINI_DEFAULT_VOICE,
@@ -235,8 +235,20 @@ def create_app(services: Optional[Services] = None, worker: Optional[TTSWorker] 
 
     @app.get("/api/keys/gemini")
     async def gemini_key_status():
-        from mytts import keystore
-        return keystore.gemini_key_status()
+        from mytts.tts.gemini import connection_status
+        return connection_status()
+
+    @app.post("/api/keys/gemini/test")
+    async def gemini_test_connection():
+        """Verify the active connection (API key or Google Cloud login) with one cheap call."""
+        from mytts.tts.gemini import GeminiError, connection_status
+        try:
+            await cloud_worker.check_connection()
+        except GeminiError as e:
+            raise HTTPException(400, str(e))
+        except Exception as e:
+            raise HTTPException(502, f"Could not reach Google: {e}")
+        return {**connection_status(), "ok": True}
 
     @app.put("/api/keys/gemini")
     async def set_gemini_key(body: GeminiKeyBody):
@@ -252,7 +264,8 @@ def create_app(services: Optional[Services] = None, worker: Optional[TTSWorker] 
         except Exception as e:  # network down etc.
             raise HTTPException(502, f"Could not reach Google to verify the key: {e}")
         keystore.set_gemini_key(key)
-        return keystore.gemini_key_status()
+        from mytts.tts.gemini import connection_status
+        return connection_status()
 
     @app.delete("/api/keys/gemini", status_code=204)
     async def delete_gemini_key():
@@ -267,9 +280,7 @@ def create_app(services: Optional[Services] = None, worker: Optional[TTSWorker] 
         from mytts.tts.gemini import VOICES, GeminiAuthError, GeminiError
         if body.voice not in VOICES:
             raise HTTPException(404, "unknown Gemini voice")
-        model = body.model or config.GEMINI_MODEL
-        if model not in config.GEMINI_MODELS:
-            raise HTTPException(422, "unknown Gemini model")
+        model = cloud_worker.resolve_model(body.model)
         style = body.style or config.GEMINI_DEFAULT_STYLE[body.lang.value]
         key = hashlib.sha256(f"{model}|{body.voice}|{body.lang.value}|{style}".encode()).hexdigest()[:24]
         path = config.DATA_DIR / "gemini_previews" / f"{key}.wav"

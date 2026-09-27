@@ -436,7 +436,7 @@ class Scheduler:
             if self.cloud_worker is None:
                 raise RuntimeError("The Gemini engine is not available in this app instance")
             name = settings.gemini_voice or config.GEMINI_DEFAULT_VOICE[lang.value]
-            model = settings.gemini_model or config.GEMINI_MODEL
+            model = settings.gemini_model  # "" -> the active connection's default (cloud worker)
             style = settings.gemini_style or config.GEMINI_DEFAULT_STYLE[lang.value]
             params = settings.params.model_copy(update={"instruction": style})
             return self.cloud_worker, gemini_voice(name, lang, model), params, False

@@ -89,10 +89,10 @@ async def test_falls_back_to_legacy_request_dialect_and_remembers_it():
     client = _client(fake)
     await client.synthesize("Один.", voice="Kore", style="calm", model="gemini-3.8-flash-tts")
     await client.synthesize("Два.", voice="Kore", style="calm", model="gemini-3.8-flash-tts")
-    legacy = fake.bodies[-1]
-    assert legacy["generationConfig"]["speechConfig"]["voiceConfig"] == {"prebuiltVoiceConfig": {"voiceName": "Kore"}}
-    assert legacy["contents"][0]["parts"][0]["text"].startswith("calm:")
-    assert len(fake.bodies) == 3  # 1 rejected + 1 legacy + 1 legacy straight away
+    second = fake.bodies[-1]
+    assert second["generationConfig"]["speechConfig"]["voiceConfig"] == {"prebuiltVoiceConfig": {"voiceName": "Kore"}}
+    assert second["contents"][0]["parts"][0]["speech_metadata"] == {"style": "calm"}  # Vertex 3.x form
+    assert len(fake.bodies) == 3  # 1 rejected + 1 accepted + 1 accepted straight away
 
 
 async def test_rate_limit_is_retried():
@@ -181,7 +181,9 @@ def test_key_is_verified_stored_privately_and_never_returned(api):
     assert c.put("/api/keys/gemini", json={"api_key": "wrong"}).status_code == 400
     assert c.get("/api/keys/gemini").json()["configured"] is False
     r = c.put("/api/keys/gemini", json={"api_key": "good-key"})
-    assert r.status_code == 200 and r.json() == {"configured": True, "last4": "-key", "source": "file"}
+    assert r.status_code == 200
+    assert {k: r.json()[k] for k in ("configured", "last4", "source", "method")} == \
+        {"configured": True, "last4": "-key", "source": "file", "method": "api_key"}
     path = config.DATA_DIR / "secrets.json"
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     for url in ("/api/keys/gemini", "/api/engines", "/api/system"):

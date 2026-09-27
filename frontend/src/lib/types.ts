@@ -31,6 +31,7 @@ export interface SynthesisParams {
   temperature: number;
   top_p: number;
   repetition_penalty: number;
+  instruction?: string; // style prompt, cloud engines only (set server-side from gemini_style)
 }
 
 export type OutputFormat = "mp3" | "m4b" | "both";

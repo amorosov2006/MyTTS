@@ -3,8 +3,11 @@
 import type {
   ChapterPatch,
   ChapterText,
+  EngineInfo,
+  GeminiKeyStatus,
   JobInfo,
   JobSettings,
+  Lang,
   SampleInfo,
   SampleRequest,
   SegmentRef,
@@ -121,3 +124,30 @@ export const segmentAudioUrl = (jobId: string, segmentId: string) => `/api/jobs/
 export const chapterAudioUrl = (jobId: string, index: number) => `/api/jobs/${jobId}/chapters/${index}/audio`;
 export const getChapterSegments = (jobId: string, index: number) =>
   request<SegmentRef[]>(`/jobs/${jobId}/chapters/${index}/segments`);
+
+// ----------------------------------------------------------------------- engines / Gemini
+
+export const getEngines = () => request<EngineInfo[]>("/engines");
+
+export const getGeminiKeyStatus = () => request<GeminiKeyStatus>("/keys/gemini");
+
+export const putGeminiKey = (api_key: string) =>
+  request<GeminiKeyStatus>("/keys/gemini", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ api_key }) });
+
+export const deleteGeminiKey = () => request<void>("/keys/gemini", { method: "DELETE" });
+
+/** POST /api/engines/gemini/preview returns audio/wav — fetched as a blob for the caller to turn into an object URL. */
+export async function previewGeminiVoice(payload: { voice: string; lang: Lang; style?: string; model?: string }): Promise<Blob> {
+  const res = await fetch(`/api/engines/gemini/preview`, json(payload));
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = await res.json();
+      if (body?.detail) detail = body.detail;
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new ApiError(res.status, detail);
+  }
+  return res.blob();
+}

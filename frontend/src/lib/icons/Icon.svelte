@@ -147,6 +147,17 @@
     <line x1="3" y1="6" x2="21" y2="6" />
     <line x1="3" y1="12" x2="21" y2="12" />
     <line x1="3" y1="18" x2="21" y2="18" />
+  {:else if name === "cloud"}
+    <path d="M7 18a4.5 4.5 0 0 1-.5-8.97A5.5 5.5 0 0 1 17.3 8.03 4 4 0 0 1 17 18H7Z" />
+  {:else if name === "key"}
+    <circle cx="8" cy="15" r="4" />
+    <path d="m10.8 12.2 8.7-8.7M16 5l2.5 2.5M19 2l3 3" />
+  {:else if name === "male"}
+    <circle cx="10" cy="14" r="6" />
+    <path d="M14.5 9.5 20 4M15 4h5v5" />
+  {:else if name === "female"}
+    <circle cx="12" cy="9" r="6" />
+    <path d="M12 15v7M8.5 19h7" />
   {:else if name === "sliders"}
     <line x1="4" y1="6" x2="20" y2="6" />
     <line x1="4" y1="12" x2="20" y2="12" />

@@ -40,8 +40,11 @@
   <div class="min-w-0 flex-1">
     <div class="font-medium text-sm truncate">{job.title}</div>
     <div class="text-xs text-muted truncate">{job.author || "Unknown author"}</div>
-    <div class="mt-1">
+    <div class="mt-1 flex items-center gap-1.5 flex-wrap">
       <Badge {tone}>{JOB_STATUS_LABEL[job.status]}</Badge>
+      {#if job.settings.engine === "gemini"}
+        <Badge tone="accent"><Icon name="cloud" size={10} /> Cloud · Gemini</Badge>
+      {/if}
     </div>
   </div>
   <div class="relative shrink-0 flex items-center">

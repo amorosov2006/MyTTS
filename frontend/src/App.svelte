@@ -15,6 +15,7 @@
   import { jobsStore } from "./lib/stores/jobs.svelte";
   import { voicesStore } from "./lib/stores/voices.svelte";
   import { systemStore } from "./lib/stores/system.svelte";
+  import { enginesStore } from "./lib/stores/engines.svelte";
   import { uiStore } from "./lib/stores/ui.svelte";
   import { initSse } from "./lib/stores/sse.svelte";
 
@@ -22,6 +23,7 @@
     jobsStore.refresh();
     voicesStore.refresh();
     systemStore.refresh();
+    enginesStore.refresh();
     initSse();
   });
 

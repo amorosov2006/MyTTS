@@ -15,6 +15,12 @@
   let busy = $state(false);
   let revealing = $state(false);
 
+  const isGemini = $derived(job.settings.engine === "gemini");
+
+  function goFixKey() {
+    uiStore.setStep(job.id, "voice");
+  }
+
   async function convertAgain() {
     busy = true;
     try {
@@ -106,6 +112,27 @@
 </script>
 
 <div class="max-w-3xl mx-auto p-6 space-y-6">
+  {#if isGemini}
+    <div class="flex items-center gap-2">
+      <Badge tone="accent"><Icon name="cloud" size={11} /> Cloud · Gemini</Badge>
+    </div>
+  {/if}
+
+  {#if job.error}
+    <div class="rounded-2xl border border-danger/40 bg-danger-soft px-4 py-3 text-sm flex items-start gap-3">
+      <Icon name="warning-fill" size={18} class="text-danger shrink-0 mt-0.5" />
+      <div class="min-w-0 flex-1">
+        <div class="font-medium text-danger mb-0.5">Conversion paused</div>
+        <div class="text-fg break-words">{job.error}</div>
+      </div>
+      {#if isGemini}
+        <button class="shrink-0 rounded-lg border border-danger/40 text-danger px-3 py-1.5 text-sm font-medium hover:bg-danger-soft transition-colors" onclick={goFixKey}>
+          Fix key
+        </button>
+      {/if}
+    </div>
+  {/if}
+
   {#if job.status === "parsed"}
     <div class="rounded-2xl border border-border bg-surface p-8 text-center">
       <button
@@ -113,7 +140,7 @@
         onclick={start}
         disabled={busy}
       >
-        <Icon name="play" size={16} /> Start conversion
+        <Icon name="play" size={16} /> {isGemini ? "Start (uses Google Gemini)" : "Start conversion"}
       </button>
     </div>
   {:else}

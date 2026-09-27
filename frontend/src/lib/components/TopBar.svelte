@@ -1,8 +1,12 @@
 <script lang="ts">
   import Icon from "../icons/Icon.svelte";
+  import Modal from "./ui/Modal.svelte";
+  import GeminiKeyCard from "./GeminiKeyCard.svelte";
   import { systemStore } from "../stores/system.svelte";
   import { themeStore } from "../stores/theme.svelte";
   import { uiStore } from "../stores/ui.svelte";
+
+  let showSettings = $state(false);
 
   const worker = $derived(systemStore.worker);
   const cap = $derived(systemStore.info?.memory.cap_gb ?? 30);
@@ -58,6 +62,14 @@
 
     <button
       class="p-2 rounded-full text-muted hover:bg-surface-2 hover:text-fg transition-colors"
+      onclick={() => (showSettings = true)}
+      aria-label="Settings"
+    >
+      <Icon name="settings" size={17} />
+    </button>
+
+    <button
+      class="p-2 rounded-full text-muted hover:bg-surface-2 hover:text-fg transition-colors"
       onclick={() => themeStore.toggle()}
       aria-label="Toggle theme"
     >
@@ -65,3 +77,14 @@
     </button>
   </div>
 </header>
+
+{#if showSettings}
+  <Modal title="Cloud engines" onClose={() => (showSettings = false)}>
+    <div class="space-y-3">
+      <p class="text-sm text-muted">
+        Manage the Google Gemini API key used for the optional cloud engine. It's stored on this Mac and only used for a book whose engine is set to Gemini, or for voice previews.
+      </p>
+      <GeminiKeyCard />
+    </div>
+  </Modal>
+{/if}

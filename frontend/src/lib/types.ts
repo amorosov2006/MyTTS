@@ -35,7 +35,13 @@ export interface SynthesisParams {
 
 export type OutputFormat = "mp3" | "m4b" | "both";
 
+export type EngineName = "local" | "gemini";
+
 export interface JobSettings {
+  engine: EngineName;
+  gemini_voice: string;
+  gemini_model: string;
+  gemini_style: string;
   voice_id: string;
   lang: Lang | null;
   speed: number;
@@ -48,6 +54,43 @@ export interface JobSettings {
   skip_footnotes: boolean;
   pause_paragraph_ms: number;
   pause_sentence_ms: number;
+}
+
+export type GeminiKeySource = "file" | "GEMINI_API_KEY" | "GOOGLE_API_KEY" | null;
+
+export interface GeminiKeyStatus {
+  configured: boolean;
+  last4: string | null;
+  source: GeminiKeySource;
+}
+
+export interface GeminiModelInfo {
+  id: string;
+  label: string;
+  usd_per_m_audio_tokens: number;
+  free_tier: boolean;
+}
+
+export interface GeminiVoiceInfo {
+  id: string;
+  name: string;
+  style: string;
+  gender: "male" | "female" | null;
+}
+
+export interface EngineInfo {
+  id: EngineName;
+  name: string;
+  offline: boolean;
+  available: boolean;
+  key?: GeminiKeyStatus;
+  default_model?: string;
+  models?: GeminiModelInfo[];
+  usd_per_m_input_tokens?: number;
+  audio_tokens_per_second?: number;
+  default_voice?: Record<Lang, string>;
+  default_style?: Record<Lang, string>;
+  voices?: GeminiVoiceInfo[];
 }
 
 export type JobStatus = "parsed" | "queued" | "running" | "paused" | "done" | "failed" | "cancelled";

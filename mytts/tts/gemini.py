@@ -3,10 +3,10 @@
 The ONLY module in MyTTS that talks to the network, and only when a job/preview selects the
 Gemini engine. REST `models/{model}:generateContent` (docs: ai.google.dev/gemini-api/docs/
 generate-content/speech-generation). Two request dialects exist:
-  - 3.x models: parts[].speech_metadata.style + speechConfig.voiceConfig.voice
-  - 2.5 preview: style as a prompt prefix + speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName
-We send the 3.x form and fall back to the 2.5 form once if the API rejects the fields, then
-remember which one works per model. Audio comes back as WAV or headerless 16-bit PCM, 24 kHz.
+  - documented 3.8 form: parts[].speech_metadata.style + speechConfig.voiceConfig.voice
+  - older field names: speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName (+ prompt-prefix style)
+We send the 3.8 form and fall back only if the API rejects the fields, then remember which
+one works per model. Only the Gemini 3.8 TTS models are offered (config.GEMINI_MODELS). Audio comes back as WAV or headerless 16-bit PCM, 24 kHz.
 """
 from __future__ import annotations
 
@@ -68,89 +68,19 @@ class ApiKeyAuth:
         return "/models"
 
 
-class VertexAuth:
-    """Google Cloud login (Application Default Credentials, e.g. `gcloud auth application-default
-    login`) -> Vertex AI generateContent, billed to the ADC quota project."""
-    method = "google_cloud"
-    base_url = config.VERTEX_API_BASE
-
-    def __init__(self, credentials=None, project: str | None = None):
-        if credentials is None:
-            credentials, project = _adc()
-        self._creds, self.project = credentials, project
-        if not project:
-            raise GeminiAuthError("Google Cloud login has no project: run "
-                                  "`gcloud auth application-default set-quota-project <PROJECT_ID>`.")
-
-    async def headers(self) -> dict:
-        if not self._creds.valid:
-            import google.auth.transport.requests
-            try:
-                await asyncio.to_thread(self._creds.refresh, google.auth.transport.requests.Request())
-            except Exception as e:
-                raise GeminiAuthError(f"Google Cloud login expired or was revoked ({e}); run "
-                                      "`gcloud auth application-default login` again.") from e
-        return {"Authorization": f"Bearer {self._creds.token}", "x-goog-user-project": self.project}
-
-    def model_path(self, model: str) -> str:
-        return (f"/projects/{self.project}/locations/{config.VERTEX_LOCATION}"
-                f"/publishers/google/models/{model}:generateContent")
-
-    def check_path(self) -> str:
-        return f"/publishers/google/models/{config.VERTEX_DEFAULT_MODEL}"
-
-
-def _adc():
-    import google.auth
-    try:
-        creds, project = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-    except Exception as e:
-        raise GeminiAuthError("No Google Cloud login found on this Mac.") from e
-    return creds, project or getattr(creds, "quota_project_id", None)
-
-
-def cloud_login_status() -> dict:
-    """Local check only (no network): is there a usable Google Cloud login?"""
-    try:
-        _, project = _adc()
-        return {"available": bool(project), "project": project}
-    except GeminiAuthError:
-        return {"available": False, "project": None}
-
-
-def current_auth():
-    """API key (if set) wins; otherwise the Google Cloud login; otherwise not connected."""
+def current_auth() -> ApiKeyAuth:
     from mytts import keystore
-    key = keystore.gemini_key()
-    if key:
-        return ApiKeyAuth(key)
-    if cloud_login_status()["available"]:
-        return VertexAuth()
-    raise GeminiAuthError("Google Gemini is not connected (⚙ → Cloud engines).")
-
-
-def models_for(method: str | None) -> dict:
-    return config.VERTEX_MODELS if method == "google_cloud" else config.GEMINI_MODELS
-
-
-def default_model(method: str | None) -> str:
-    return config.VERTEX_DEFAULT_MODEL if method == "google_cloud" else config.GEMINI_MODEL
+    return ApiKeyAuth(keystore.gemini_key() or "")
 
 
 def connection_status() -> dict:
-    """What the UI shows: method in use (api_key wins), key tail, cloud project. No network."""
+    """What the UI shows about the key (never the key itself). No network."""
     from mytts import keystore
-    key = keystore.gemini_key_status()
-    cloud = cloud_login_status()
-    method = "api_key" if key["configured"] else ("google_cloud" if cloud["available"] else None)
-    return {**key, "configured": method is not None, "method": method,
-            "cloud_project": cloud["project"], "cloud_available": cloud["available"]}
+    return keystore.gemini_key_status()
 
 
-# Request dialects, tried in order until one is accepted (then remembered per model):
-#   AI Studio 3.x: voiceConfig.voice + speech_metadata.style
-#   Vertex 3.x:    voiceConfig.prebuiltVoiceConfig + speech_metadata.style
-#   2.5 models:    voiceConfig.prebuiltVoiceConfig + style as a prompt prefix
+# Request dialects, tried in order until one is accepted (then remembered per model): the
+# documented 3.8 form first; the older field names only if the API rejects it.
 DIALECTS = [("voice", "metadata"), ("prebuilt", "metadata"), ("prebuilt", "prefix")]
 
 
@@ -175,7 +105,7 @@ class GeminiClient:
     async def synthesize(self, text: str, *, voice: str, style: str, model: str) -> np.ndarray:
         """float32 mono audio at config.SAMPLE_RATE (24 kHz)."""
         known = model in self._dialect
-        d = self._dialect.get(model, 2 if model.startswith("gemini-2.5") else 0)
+        d = self._dialect.get(model, 0)
         for attempt in range(config.GEMINI_MAX_RETRIES + len(DIALECTS)):
             r = await self._client.post(self.auth.model_path(model), headers=await self.auth.headers(),
                                         json=_body(text, voice, style, *DIALECTS[d]))
@@ -183,7 +113,7 @@ class GeminiClient:
                 self._dialect[model] = d
                 return _decode(r.json())
             if r.status_code == 400 and not known and d + 1 < len(DIALECTS) and not _is_auth(r):
-                d += 1  # e.g. Vertex rejects voiceConfig.voice with a generic "invalid argument"
+                d += 1  # field names rejected: try the next dialect
                 continue
             if r.status_code in (429, 500, 502, 503, 504) and attempt < config.GEMINI_MAX_RETRIES:
                 delay = _retry_delay(r, attempt)
@@ -262,6 +192,6 @@ def _error_from(r: httpx.Response) -> GeminiError:
         return GeminiError(f"Gemini model not available for this connection: {msg}")
     if r.status_code == 429:
         return GeminiError(f"Gemini rate limit / quota exceeded: {msg}")
-    if "billing" in msg.lower() or "free tier" in msg.lower():
+    if "billing" in msg.lower():
         return GeminiAuthError(f"Gemini: {msg}")
     return GeminiError(f"Gemini error {r.status_code}: {msg}")

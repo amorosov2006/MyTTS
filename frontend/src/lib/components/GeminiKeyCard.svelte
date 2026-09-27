@@ -72,7 +72,7 @@
     {/if}
     <p class="text-xs text-muted leading-relaxed">
       Get a key at <a class="text-accent hover:underline" href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">aistudio.google.com/apikey</a>.
-      Gemini 3.8 models need billing enabled on the key's Google Cloud project; Gemini 2.5 Flash TTS (preview) has a free tier, but on the free tier Google may use your text to improve its products.
+      Gemini 3.8 TTS needs billing enabled on the key's Google Cloud project.
     </p>
   {/if}
 </div>

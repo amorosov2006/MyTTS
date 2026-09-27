@@ -223,9 +223,9 @@ def create_app(services: Optional[Services] = None, worker: Optional[TTSWorker] 
             {"id": "gemini", "name": "Google Gemini TTS (cloud)", "offline": False,
              "available": (conn := gemini_mod.connection_status())["configured"],
              "key": conn,
-             "default_model": gemini_mod.default_model(conn["method"]),
-             "models": [{"id": m, "label": lbl, "usd_per_m_audio_tokens": usd, "free_tier": free}
-                        for m, (lbl, usd, free) in gemini_mod.models_for(conn["method"]).items()],
+             "default_model": config.GEMINI_MODEL,
+             "models": [{"id": m, "label": lbl, "usd_per_m_audio_tokens": usd}
+                        for m, (lbl, usd) in config.GEMINI_MODELS.items()],
              "usd_per_m_input_tokens": config.GEMINI_INPUT_USD_PER_M,
              "audio_tokens_per_second": config.GEMINI_AUDIO_TOKENS_PER_S,
              "default_voice": config.GEMINI_DEFAULT_VOICE,

@@ -27,8 +27,6 @@ dependencies = [
     "pysbd>=0.3.4",
     "mutagen>=1.48.1",
     "httpx>=0.28.1",
-    "google-auth>=2.58.1",
-    "requests>=2.34.2",
 ]
 
 [tool.uv]

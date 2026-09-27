@@ -16,8 +16,7 @@ import soundfile as sf
 
 from mytts import config, keystore
 from mytts.contracts import Lang, SynthesisItem, SynthesisParams, SynthesisResult, Voice, WorkerStatus
-from mytts.tts import gemini as g
-from mytts.tts.gemini import ApiKeyAuth, GeminiAuthError, GeminiClient, GeminiError
+from mytts.tts.gemini import ApiKeyAuth, GeminiAuthError, GeminiClient, GeminiError, current_auth
 
 CHARS_PER_SECOND = 14.0
 
@@ -30,8 +29,7 @@ def plausible_duration(text: str, seconds: float) -> bool:
 class GeminiWorker:
     def __init__(self, key_fn: Optional[Callable[[], Optional[str]]] = None, transport=None,
                  auth_fn: Optional[Callable] = None):
-        # auth_fn -> ApiKeyAuth | VertexAuth. Default: API key if saved, else Google Cloud login.
-        self._auth_fn = auth_fn or ((lambda: ApiKeyAuth(key_fn() or "")) if key_fn else g.current_auth)
+        self._auth_fn = auth_fn or ((lambda: ApiKeyAuth(key_fn() or "")) if key_fn else current_auth)
         self._transport = transport  # tests inject httpx.MockTransport
         self._client: Optional[GeminiClient] = None
         self._client_key: Optional[str] = None
@@ -41,22 +39,16 @@ class GeminiWorker:
 
     def _get_client(self) -> GeminiClient:
         auth = self._auth_fn()
-        ident = (auth.method, getattr(auth, "_key", None), getattr(auth, "project", None))
+        ident = getattr(auth, "_key", None)
         if self._client is None or ident != self._client_key:
             self._client = GeminiClient(auth, transport=self._transport)
             self._client_key = ident
         return self._client
 
-    def method(self) -> Optional[str]:
-        try:
-            return self._auth_fn().method
-        except GeminiAuthError:
-            return None
-
-    def resolve_model(self, model: str) -> str:
-        """The job's model if the active connection offers it, else that connection's default."""
-        method = self.method()
-        return model if model in g.models_for(method) else g.default_model(method)
+    @staticmethod
+    def resolve_model(model: str) -> str:
+        """The job's model if still offered (3.8 only), else the default 3.8 Flash TTS."""
+        return model if model in config.GEMINI_MODELS else config.GEMINI_MODEL
 
     async def check_connection(self) -> None:
         await self._get_client().check_key()

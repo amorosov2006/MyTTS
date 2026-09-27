@@ -13,13 +13,12 @@ The facts below were checked on 2026-09-27 at ai.google.dev. Prices and plans ch
 
 These are Gemini API prices per 1M tokens, from [the pricing page](https://ai.google.dev/gemini-api/docs/pricing). Audio is billed at 25 tokens per second of speech.
 
-| Model (MyTTS option) | Free tier | Audio output price | ≈ cost of a 10-hour book |
-|---|---|---|---|
-| `gemini-3.8-flash-tts` (**default**, best) | no | $9 (→ $18 from 2027-01-01) | ≈ $8 |
-| `gemini-3.8-flash-lite-tts` (cheaper, faster) | no | $6 (→ $12 from 2027) | ≈ $5.40 |
-| `gemini-2.5-flash-preview-tts` (older) | **yes**, within daily limits | $10 | $0 on the free tier; ≈ $9 paid |
+| Model (MyTTS option) | Audio output price | ≈ cost of a 10-hour book |
+|---|---|---|
+| `gemini-3.8-flash-tts` (**default**, best) | $9 (→ $18 from 2027-01-01) | ≈ $8 |
+| `gemini-3.8-flash-lite-tts` (cheaper, faster) | $6 (→ $12 from 2027) | ≈ $5.40 |
 
-**Privacy.** On the **free tier**, Google may use what you send to improve its products, and human reviewers may read it. On a **paid** (billing-enabled) project, it doesn't. See the [Gemini API terms](https://ai.google.dev/gemini-api/terms). For books that aren't yours to share, use a billing-enabled key.
+MyTTS offers only the 3.8 models. They have no free tier, so billing must be enabled on the key's project. Because the project is paid, Google doesn't use what you send to improve its products; see the [Gemini API terms](https://ai.google.dev/gemini-api/terms).
 
 ## 3. Create the API key (about 3 minutes)
 
@@ -29,7 +28,7 @@ These are Gemini API prices per 1M tokens, from [the pricing page](https://ai.go
    - Click **Create API key**.
    - Choose **Create API key in new project**, or pick an existing Google Cloud project.
    - Copy the key; it starts with `AIza…`. Treat it like a password.
-2. **Enable billing** (skip this only if you'll use just the free-tier 2.5 model).
+2. **Enable billing** (required for the 3.8 models).
    - In AI Studio, next to your key/project, click **Set up billing**. You can also go to [console.cloud.google.com/billing](https://console.cloud.google.com/billing) and link a billing account to the project.
    - Optional but recommended: in the Cloud console go to **Billing → Budgets & alerts** and set a monthly budget (e.g. $20) with email alerts.
 3. **Check your rate limits** at [aistudio.google.com/rate-limit](https://aistudio.google.com/rate-limit). They depend on your tier.
@@ -67,6 +66,6 @@ How the Gemini engine differs:
 | Message | What to do |
 |---|---|
 | "API key not valid" | Re-copy the key from aistudio.google.com/apikey |
-| mentions billing / free tier | Enable billing on the key's project, or switch the model to `gemini-2.5-flash-preview-tts` |
+| mentions billing | Enable billing on the key's project |
 | "rate limit / quota exceeded" | Wait, lower `MYTTS_GEMINI_CONCURRENCY`, or raise your tier |
 | The voice sounds slightly different between paragraphs | This is a known Gemini trait. Keep the style text short and consistent, and use the same voice/model for the whole book |

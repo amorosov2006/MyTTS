@@ -211,7 +211,7 @@
               onchange={(e) => update("gemini_model", (e.target as HTMLSelectElement).value)}
             >
               {#each gemini?.models ?? [] as m (m.id)}
-                <option value={m.id}>{m.label}{m.free_tier ? " · free tier" : ""}</option>
+                <option value={m.id}>{m.label}</option>
               {/each}
             </select>
           </div>
@@ -267,12 +267,7 @@
 
           {#if includedChars > 0}
             <div class="rounded-xl border border-border bg-surface-2 px-4 py-3 text-sm">
-              {#if selectedModelInfo?.free_tier}
-                <span class="font-medium">Free tier: $0</span> within Google's daily limits — otherwise
-                ≈ <span class="font-medium tabular-nums">${estUsd.toFixed(2)}</span> for this book ({formatHours(estAudioSeconds)} of audio) at current Gemini pricing.
-              {:else}
-                ≈ <span class="font-medium tabular-nums">${estUsd.toFixed(2)}</span> for this book ({formatHours(estAudioSeconds)} of audio) at current Gemini pricing.
-              {/if}
+              ≈ <span class="font-medium tabular-nums">${estUsd.toFixed(2)}</span> for this book ({formatHours(estAudioSeconds)} of audio) at current Gemini pricing.
             </div>
           {/if}
         {/if}

@@ -242,9 +242,8 @@ const outputDirDefault = path.join(os.homedir(), "Audiobooks");
 // Mirrors mytts/config.py and mytts/tts/gemini.py so the mock UI is representative.
 
 const GEMINI_MODELS = [
-  { id: "gemini-3.8-flash-tts", label: "Gemini 3.8 Flash TTS — best quality", usd_per_m_audio_tokens: 9.0, free_tier: false },
-  { id: "gemini-3.8-flash-lite-tts", label: "Gemini 3.8 Flash-Lite TTS — cheaper, faster", usd_per_m_audio_tokens: 6.0, free_tier: false },
-  { id: "gemini-2.5-flash-preview-tts", label: "Gemini 2.5 Flash TTS (preview) — has a free tier", usd_per_m_audio_tokens: 10.0, free_tier: true },
+  { id: "gemini-3.8-flash-tts", label: "Gemini 3.8 Flash TTS — best quality", usd_per_m_audio_tokens: 9.0 },
+  { id: "gemini-3.8-flash-lite-tts", label: "Gemini 3.8 Flash-Lite TTS — cheaper, faster", usd_per_m_audio_tokens: 6.0 },
 ];
 const GEMINI_DEFAULT_MODEL = "gemini-3.8-flash-tts";
 const GEMINI_AUDIO_TOKENS_PER_S = 25;

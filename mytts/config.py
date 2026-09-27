@@ -64,21 +64,9 @@ PAUSE_CHAPTER_TITLE_MS = 1200
 # --- Google Gemini TTS (optional cloud engine; off unless a job selects it)
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
 GEMINI_MODEL = os.environ.get("MYTTS_GEMINI_MODEL", "gemini-3.8-flash-tts")
-GEMINI_MODELS = {  # AI Studio API key. id: (label, USD per 1M output audio tokens, free tier)
-    "gemini-3.8-flash-tts": ("Gemini 3.8 Flash TTS — best quality", 9.00, False),
-    "gemini-3.8-flash-lite-tts": ("Gemini 3.8 Flash-Lite TTS — cheaper, faster", 6.00, False),
-    "gemini-2.5-flash-preview-tts": ("Gemini 2.5 Flash TTS (preview) — has a free tier", 10.00, True),
-}
-# Google Cloud login (Vertex AI). Probed 2026-09-27: the 3.8 TTS models are not on Vertex yet.
-# Prices: AI Studio list prices as estimates (Vertex list for 2.5 Flash TTS: $10); None = unknown.
-VERTEX_API_BASE = "https://aiplatform.googleapis.com/v1"
-VERTEX_LOCATION = os.environ.get("MYTTS_VERTEX_LOCATION", "global")
-VERTEX_DEFAULT_MODEL = os.environ.get("MYTTS_VERTEX_MODEL", "gemini-3.1-flash-tts-preview")
-VERTEX_MODELS = {
-    "gemini-3.1-flash-tts-preview": ("Gemini 3.1 Flash TTS (preview) — newest on Google Cloud", 20.00, False),
-    "gemini-2.5-pro-tts": ("Gemini 2.5 Pro TTS — highest quality 2.5", 20.00, False),
-    "gemini-2.5-flash-tts": ("Gemini 2.5 Flash TTS", 10.00, False),
-    "gemini-2.5-flash-lite-preview-tts": ("Gemini 2.5 Flash-Lite TTS (preview) — cheapest", None, False),
+GEMINI_MODELS = {  # id: (label, USD per 1M output audio tokens through 2026-12-31)
+    "gemini-3.8-flash-tts": ("Gemini 3.8 Flash TTS — best quality", 9.00),
+    "gemini-3.8-flash-lite-tts": ("Gemini 3.8 Flash-Lite TTS — cheaper, faster", 6.00),
 }
 GEMINI_INPUT_USD_PER_M = 0.50
 GEMINI_AUDIO_TOKENS_PER_S = 25

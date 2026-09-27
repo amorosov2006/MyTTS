@@ -69,7 +69,6 @@ export interface GeminiModelInfo {
   id: string;
   label: string;
   usd_per_m_audio_tokens: number;
-  free_tier: boolean;
 }
 
 export interface GeminiVoiceInfo {

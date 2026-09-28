@@ -186,6 +186,10 @@ def _retry_delay(r: httpx.Response, attempt: int) -> float:
 
 def _error_from(r: httpx.Response) -> GeminiError:
     msg = _message(r)
+    if r.status_code == 402 or "prepay" in msg.lower():
+        return GeminiAuthError("Google Gemini prepaid balance is empty — add credits at "
+                               "https://aistudio.google.com/billing (Buy credits), then press Resume. "
+                               f"Google said: {msg}")
     if _is_auth(r):
         return GeminiAuthError(f"Gemini rejected the API key ({r.status_code}): {msg}")
     if r.status_code == 404:

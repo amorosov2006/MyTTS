@@ -106,12 +106,12 @@ async def test_pause_resume_cancel(running_scheduler, sample_book_txt):
     with pytest.raises(ConflictError):
         sch.pause_job(info.id)
 
-    resumed = sch.resume_job(info.id)
+    resumed = await sch.resume_job(info.id)
     assert resumed.status in (JobStatus.queued, JobStatus.running)
     await _wait_for(lambda: sch.get_job(info.id).status == JobStatus.done, timeout=10)
 
     with pytest.raises(ConflictError):
-        sch.resume_job(info.id)
+        await sch.resume_job(info.id)
 
     info2 = await sch.create_job(sample_book_txt, "sample_book.txt")
     await sch.start_job(info2.id)
@@ -163,7 +163,7 @@ async def test_restart_recovery_resumes_without_redoing_done_segments(
         assert sch2.get_job(info.id).status == JobStatus.paused
         assert sch2.get_job(info.id).error
 
-        resumed = sch2.resume_job(info.id)
+        resumed = await sch2.resume_job(info.id)
         assert resumed.status in (JobStatus.queued, JobStatus.running)
         await _wait_for(lambda: sch2.get_job(info.id).status == JobStatus.done, timeout=10)
         # segments already marked done before the crash were never re-synthesized
@@ -299,7 +299,7 @@ async def test_pause_resume_does_not_resynthesize_in_flight(scheduler_factory, s
         await sch.start_job(info.id)
         await _wait_for(lambda: sch.worker.calls >= 1, timeout=5)
         sch.pause_job(info.id)
-        sch.resume_job(info.id)  # immediately, while the first batch is still in flight
+        await sch.resume_job(info.id)  # immediately, while the first batch is still in flight
         await _wait_for(lambda: sch.get_job(info.id).status == JobStatus.done, timeout=15)
         ids = [s for b in sch.worker.synthesize_batches for s in b]
         assert len(ids) == len(set(ids)), "a segment was synthesized twice"
@@ -323,7 +323,7 @@ async def test_stuck_assembling_chapter_recovers_after_restart(scheduler_factory
     await sch2.start()
     try:
         assert sch2.get_job(info.id).status == JobStatus.paused
-        sch2.resume_job(info.id)
+        await sch2.resume_job(info.id)
         await _wait_for(lambda: sch2.get_job(info.id).status == JobStatus.done, timeout=10)
         assert next(c for c in sch2.get_job(info.id).chapters if c.index == first.index).status == "done"
     finally:
@@ -370,5 +370,25 @@ async def test_sample_segment_urls_are_in_reading_order_without_gaps(scheduler_f
         assert final == sorted(final) and len(final) == len(set(final))
         for urls in seen:  # every intermediate list is a prefix of the final one
             assert urls == final[:len(urls)]
+    finally:
+        await sch.stop()
+
+
+async def test_chapters_included_while_paused_are_prepared_on_resume(scheduler_factory, sample_book_txt):
+    """Start with one chapter, pause, tick the rest, resume: every ticked chapter is converted."""
+    sch = scheduler_factory(FakeWorker(delay=0.2))
+    await sch.start()
+    try:
+        info = await sch.create_job(sample_book_txt, "sample_book.txt")
+        first, *rest = [c.index for c in info.chapters]
+        sch.update_chapters(info.id, [{"index": i, "include": False} for i in rest])
+        await sch.start_job(info.id)
+        sch.pause_job(info.id)
+        sch.update_chapters(info.id, [{"index": i, "include": True} for i in rest])
+        await sch.resume_job(info.id)
+        await _wait_for(lambda: sch.get_job(info.id).status == JobStatus.done, timeout=15)
+        final = sch.get_job(info.id)
+        assert all(c.status in ("done", "skipped") for c in final.chapters)
+        assert sum(1 for c in final.chapters if c.status == "done") > 1
     finally:
         await sch.stop()

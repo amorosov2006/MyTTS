@@ -497,7 +497,7 @@ def create_app(services: Optional[Services] = None, worker: Optional[TTSWorker] 
 
     @app.post("/api/jobs/{job_id}/resume")
     async def resume_job(job_id: str):
-        return scheduler.resume_job(job_id).model_dump(mode="json")
+        return (await scheduler.resume_job(job_id)).model_dump(mode="json")
 
     @app.post("/api/jobs/{job_id}/cancel")
     async def cancel_job(job_id: str):

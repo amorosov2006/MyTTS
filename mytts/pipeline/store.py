@@ -367,6 +367,16 @@ class Store:
             )
         self.update_chapter_state(job_id, chapter, segments_total=len(segments), segments_done=0)
 
+    def chapter_indexes_with_segments(self, job_id: str) -> set[int]:
+        with self._lock:
+            return {r[0] for r in self._conn.execute(
+                "SELECT DISTINCT chapter FROM segments WHERE job_id=?", (job_id,))}
+
+    def delete_pending_segments(self, job_id: str, chapter: int) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM segments WHERE job_id=? AND chapter=? AND status='pending'",
+                               (job_id, chapter))
+
     def raw_wav_path(self, job_id: str, segment_id: str) -> Path:
         d = self.job_workdir(job_id) / "raw"
         d.mkdir(exist_ok=True)

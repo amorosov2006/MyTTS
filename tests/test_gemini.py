@@ -207,3 +207,11 @@ def test_engines_listing(api):
     eng = {e["id"]: e for e in c.get("/api/engines").json()}
     assert eng["local"]["offline"] and not eng["gemini"]["offline"]
     assert len(eng["gemini"]["voices"]) == 30 and eng["gemini"]["default_model"] == config.GEMINI_MODEL
+
+
+async def test_empty_prepaid_balance_gives_actionable_error():
+    async def handler(request):
+        return httpx.Response(402, json={"error": {"message": "Your prepayment credits are depleted."}})
+    with pytest.raises(GeminiAuthError, match="aistudio.google.com/billing"):
+        await GeminiClient("k", transport=httpx.MockTransport(handler)).synthesize(
+            "x", voice="Kore", style="", model="gemini-3.8-flash-tts")

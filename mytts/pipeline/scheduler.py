@@ -237,30 +237,45 @@ class Scheduler:
         finally:
             self._preparing.discard(job_id)
 
+    async def _prepare_chapter(self, job_id: str, cm, book_json: dict, settings: JobSettings) -> None:
+        cdata = book_json["chapters"][cm.index]
+        chapter = Chapter(index=cm.index, title=cm.title, paragraphs=cdata["paragraphs"],
+                          include=True, kind=cdata.get("kind", "body"))
+        lang = settings.lang or (Lang(book_json["lang"]) if book_json.get("lang") else None)
+        if lang is None:
+            sample_text = "\n".join(chapter.paragraphs[:3]) or chapter.title or "."
+            lang = await asyncio.to_thread(self.services.detect_lang, sample_text)
+        segments = await asyncio.to_thread(
+            self.services.prepare_chapter, chapter, lang,
+            read_title=settings.read_titles, skip_footnotes=settings.skip_footnotes,
+            pause_sentence_ms=settings.pause_sentence_ms,
+            pause_paragraph_ms=settings.pause_paragraph_ms,
+            **self._segment_sizes(settings),
+        )
+        if segments:
+            self.store.add_segments(job_id, cm.index, segments)
+            self.store.update_chapter_state(job_id, cm.index, status="pending")
+        else:
+            self.store.update_chapter_state(job_id, cm.index, status="skipped", segments_total=0)
+
+    async def _sync_chapter_selection(self, job_id: str) -> None:
+        """Chapters (un)ticked while paused: prepare newly included ones, drop the queued work
+        of excluded ones (finished audio is kept)."""
+        info = self.store.get_job_info(job_id)
+        book_json = self.store.read_book_json(job_id)
+        prepared = self.store.chapter_indexes_with_segments(job_id)
+        for cm in info.chapters:
+            if cm.include and cm.index not in prepared and cm.status not in ("done", "skipped"):
+                await self._prepare_chapter(job_id, cm, book_json, info.settings)
+            elif not cm.include and cm.index in prepared:
+                self.store.delete_pending_segments(job_id, cm.index)
+                self.store.update_chapter_state(job_id, cm.index, status="skipped")
+
     async def _start_job(self, job_id: str, info: JobInfo) -> JobInfo:
         book_json = self.store.read_book_json(job_id)
-        book_lang = Lang(book_json["lang"]) if book_json.get("lang") else None
         for cm in self.store.get_chapters(job_id):
-            if not cm.include:
-                continue
-            cdata = book_json["chapters"][cm.index]
-            chapter = Chapter(index=cm.index, title=cm.title, paragraphs=cdata["paragraphs"],
-                               include=True, kind=cdata.get("kind", "body"))
-            lang = info.settings.lang or book_lang
-            if lang is None:
-                sample_text = "\n".join(chapter.paragraphs[:3]) or chapter.title or "."
-                lang = await asyncio.to_thread(self.services.detect_lang, sample_text)
-            segments = await asyncio.to_thread(
-                self.services.prepare_chapter, chapter, lang,
-                read_title=info.settings.read_titles, skip_footnotes=info.settings.skip_footnotes,
-                pause_sentence_ms=info.settings.pause_sentence_ms,
-                pause_paragraph_ms=info.settings.pause_paragraph_ms,
-                **self._segment_sizes(info.settings),
-            )
-            if segments:
-                self.store.add_segments(job_id, cm.index, segments)
-            else:
-                self.store.update_chapter_state(job_id, cm.index, status="skipped", segments_total=0)
+            if cm.include:
+                await self._prepare_chapter(job_id, cm, book_json, info.settings)
         self.store.update_job(job_id, status=JobStatus.queued)
         self.store.claim_output_dir(job_id, info.settings, book_json.get("author"), book_json["title"])
         self._job_stats[job_id] = {"started_at": time.monotonic(), "busy_s": 0.0}
@@ -280,10 +295,15 @@ class Scheduler:
         self._publish_job(job_id, force=True)
         return self.store.get_job_info(job_id)
 
-    def resume_job(self, job_id: str) -> JobInfo:
+    async def resume_job(self, job_id: str) -> JobInfo:
         info = self._require_job(job_id)
-        if info.status != JobStatus.paused:
+        if info.status != JobStatus.paused or job_id in self._preparing:
             raise ConflictError(f"cannot resume a job in status {info.status.value}")
+        self._preparing.add(job_id)
+        try:
+            await self._sync_chapter_selection(job_id)
+        finally:
+            self._preparing.discard(job_id)
         self.store.reset_running_segments(
             job_id, exclude=frozenset(s for j, s in self._inflight if j == job_id))
         self._unstick_chapters(job_id)

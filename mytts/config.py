@@ -71,8 +71,11 @@ GEMINI_MODELS = {  # id: (label, USD per 1M output audio tokens through 2026-12-
 GEMINI_INPUT_USD_PER_M = 0.50
 GEMINI_AUDIO_TOKENS_PER_S = 25
 GEMINI_CONCURRENCY = int(os.environ.get("MYTTS_GEMINI_CONCURRENCY", "4"))
-GEMINI_TIMEOUT_S = 120
-GEMINI_MAX_RETRIES = 5
+GEMINI_START_RPM = float(os.environ.get("MYTTS_GEMINI_RPM", "10"))  # adapts to the real quota
+GEMINI_MIN_RPM = 1.0
+GEMINI_MAX_RPM = 120.0
+GEMINI_TIMEOUT_S = 180
+GEMINI_MAX_RETRIES = 8
 # Larger segments than the local model: a paragraph reads with better flow and costs fewer requests
 GEMINI_SEGMENT_TARGET_CHARS = 700
 GEMINI_SEGMENT_MAX_CHARS = 1400

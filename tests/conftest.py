@@ -7,6 +7,7 @@ _TEST_HOME = tempfile.mkdtemp(prefix="mytts-tests-")
 for _var, _sub in (("MYTTS_DATA_DIR", "data"), ("MYTTS_USER_VOICES_DIR", "voices"),
                    ("MYTTS_OUTPUT_DIR", "out")):
     os.environ[_var] = os.path.join(_TEST_HOME, _sub)
+os.environ["MYTTS_GEMINI_RPM"] = "6000"  # no request pacing against the simulated Google API
 # ...and never the user's real Google credentials (gcloud ADC / API keys).
 os.environ["CLOUDSDK_CONFIG"] = os.path.join(_TEST_HOME, "gcloud")
 os.environ.pop("GOOGLE_APPLICATION_CREDENTIALS", None)

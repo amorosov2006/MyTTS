@@ -86,8 +86,9 @@ class Segment(BaseModel):
 #                       pause_sentence_ms: int = config.PAUSE_SENTENCE_MS,
 #                       pause_paragraph_ms: int = config.PAUSE_PARAGRAPH_MS,
 #                       target_chars: int = config.SEGMENT_TARGET_CHARS,
-#                       max_chars: int = config.SEGMENT_MAX_CHARS) -> list[Segment]
-#        (the cloud engine uses larger segments: config.GEMINI_SEGMENT_*)
+#                       max_chars: int = config.SEGMENT_MAX_CHARS,
+#                       join_paragraphs: bool = False) -> list[Segment]
+#        (the cloud engine uses larger segments: config.GEMINI_SEGMENT_*, paragraphs joined)
 #        Paragraphs detected as the other language get that Segment.lang (mixed-language books).
 #        Title segment (is_title=True) gets config.PAUSE_CHAPTER_TITLE_MS.
 #   def compare_form(text: str, lang: Lang) -> str               canonical form for QA scoring:

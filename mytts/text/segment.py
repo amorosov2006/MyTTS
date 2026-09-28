@@ -241,6 +241,7 @@ def prepare_chapter(
     pause_paragraph_ms: int = _DEFAULT_PAUSE_PARAGRAPH_MS,
     target_chars: int = SEGMENT_TARGET_CHARS,
     max_chars: int = SEGMENT_MAX_CHARS,
+    join_paragraphs: bool = False,
 ) -> list[Segment]:
     segments: list[Segment] = []
     index = 0
@@ -289,4 +290,25 @@ def prepare_chapter(
             ))
             index += 1
 
+    if join_paragraphs:
+        segments = _join_paragraphs(segments, max_chars, pause_paragraph_ms)
     return segments
+
+
+def _join_paragraphs(segments: list[Segment], max_chars: int, pause_paragraph_ms: int) -> list[Segment]:
+    """Cloud engine: pack consecutive paragraphs into one request (up to max_chars), separated
+    by a blank line so the model still pauses between them. Titles and scene breaks (longer
+    pauses) stay boundaries. Cuts the number of requests several-fold for dialogue-heavy books."""
+    out: list[Segment] = []
+    for s in segments:
+        prev = out[-1] if out else None
+        if (prev and not prev.is_title and not s.is_title and prev.lang == s.lang
+                and prev.pause_after_ms <= pause_paragraph_ms
+                and len(prev.text) + 2 + len(s.text) <= max_chars):
+            sep = "\n\n" if prev.pause_after_ms == pause_paragraph_ms else " "
+            out[-1] = prev.model_copy(update={"text": prev.text + sep + s.text,
+                                              "source": prev.source + sep + s.source,
+                                              "pause_after_ms": s.pause_after_ms})
+        else:
+            out.append(s)
+    return [s.model_copy(update={"index": i, "id": f"c{s.chapter:03d}s{i:04d}"}) for i, s in enumerate(out)]

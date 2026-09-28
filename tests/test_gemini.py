@@ -215,3 +215,23 @@ async def test_empty_prepaid_balance_gives_actionable_error():
     with pytest.raises(GeminiAuthError, match="aistudio.google.com/billing"):
         await GeminiClient("k", transport=httpx.MockTransport(handler)).synthesize(
             "x", voice="Kore", style="", model="gemini-3.8-flash-tts")
+
+
+async def test_rate_limiter_backs_off_and_recovers(monkeypatch):
+    from mytts.tts.gemini import RateLimiter
+    lim = RateLimiter(rpm=20)
+    lim.on_rate_limited()
+    assert lim.rpm == 10
+    for _ in range(10):
+        lim.on_success()
+    assert lim.rpm == 12.5
+
+
+def test_cloud_segments_join_paragraphs():
+    from mytts.contracts import Chapter
+    from mytts.text import prepare_chapter
+    ch = Chapter(index=1, title="Глава 1", paragraphs=["— Привет.", "— Здравствуй.", "Он кивнул.", "* * *", "Утро."])
+    segs = prepare_chapter(ch, Lang.ru, max_chars=1400, join_paragraphs=True)
+    assert [s.is_title for s in segs] == [True, False, False]          # title, block, after scene break
+    assert segs[1].text.count("\n\n") == 2                             # paragraph breaks kept
+    assert [s.id for s in segs] == ["c001s0000", "c001s0001", "c001s0002"]

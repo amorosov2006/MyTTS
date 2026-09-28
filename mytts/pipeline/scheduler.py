@@ -475,7 +475,7 @@ class Scheduler:
     def _segment_sizes(settings: JobSettings) -> dict:
         if settings.engine == EngineName.gemini:
             return {"target_chars": config.GEMINI_SEGMENT_TARGET_CHARS,
-                    "max_chars": config.GEMINI_SEGMENT_MAX_CHARS}
+                    "max_chars": config.GEMINI_SEGMENT_MAX_CHARS, "join_paragraphs": True}
         return {}
 
     async def _run_job_batch(self, job_id: str, rows) -> None:

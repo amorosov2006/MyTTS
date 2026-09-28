@@ -84,6 +84,34 @@ def connection_status() -> dict:
 DIALECTS = [("voice", "metadata"), ("prebuilt", "metadata"), ("prebuilt", "prefix")]
 
 
+class RateLimiter:
+    """Spaces out request starts and adapts to the account's per-minute quota: halve the rate on
+    a 429, speed up by 25% after every 10 successes (bounded)."""
+
+    def __init__(self, rpm: float = config.GEMINI_START_RPM):
+        self.rpm = rpm
+        self._next = 0.0
+        self._ok = 0
+        self._lock = asyncio.Lock()
+
+    async def wait(self) -> None:
+        loop = asyncio.get_running_loop()
+        async with self._lock:
+            start = max(loop.time(), self._next)
+            self._next = start + 60.0 / self.rpm
+        await asyncio.sleep(max(0.0, start - loop.time()))
+
+    def on_success(self) -> None:
+        self._ok += 1
+        if self._ok >= 10:
+            self._ok = 0
+            self.rpm = min(config.GEMINI_MAX_RPM, self.rpm * 1.25)
+
+    def on_rate_limited(self) -> None:
+        self._ok = 0
+        self.rpm = max(config.GEMINI_MIN_RPM, self.rpm / 2)
+
+
 class GeminiClient:
     def __init__(self, auth, *, transport: httpx.AsyncBaseTransport | None = None):
         if isinstance(auth, str) or auth is None:
@@ -92,6 +120,7 @@ class GeminiClient:
         self._client = httpx.AsyncClient(base_url=auth.base_url, timeout=config.GEMINI_TIMEOUT_S,
                                          transport=transport, headers={"Content-Type": "application/json"})
         self._dialect: dict[str, int] = {}  # model -> index into DIALECTS known to work
+        self.limiter = RateLimiter()
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -107,17 +136,22 @@ class GeminiClient:
         known = model in self._dialect
         d = self._dialect.get(model, 0)
         for attempt in range(config.GEMINI_MAX_RETRIES + len(DIALECTS)):
+            await self.limiter.wait()
             r = await self._client.post(self.auth.model_path(model), headers=await self.auth.headers(),
                                         json=_body(text, voice, style, *DIALECTS[d]))
             if r.status_code == 200:
                 self._dialect[model] = d
+                self.limiter.on_success()
                 return _decode(r.json())
             if r.status_code == 400 and not known and d + 1 < len(DIALECTS) and not _is_auth(r):
                 d += 1  # field names rejected: try the next dialect
                 continue
             if r.status_code in (429, 500, 502, 503, 504) and attempt < config.GEMINI_MAX_RETRIES:
                 delay = _retry_delay(r, attempt)
-                log.warning("Gemini %s, retrying in %.1fs", r.status_code, delay)
+                if r.status_code == 429:
+                    self.limiter.on_rate_limited()
+                log.warning("Gemini %s, retrying in %.1fs (pace now %.1f req/min): %s",
+                            r.status_code, delay, self.limiter.rpm, _message(r)[:200])
                 await asyncio.sleep(delay)
                 continue
             raise _error_from(r)

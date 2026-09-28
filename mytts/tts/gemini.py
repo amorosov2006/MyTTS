@@ -48,6 +48,14 @@ class GeminiAuthError(GeminiError):
     """Key missing/invalid/unauthorized or billing not enabled — retrying won't help."""
 
 
+class GeminiQuotaError(GeminiAuthError):
+    """Daily quota exhausted; retry_at = epoch seconds when Google says requests work again."""
+
+    def __init__(self, message: str, retry_at: float):
+        super().__init__(message)
+        self.retry_at = retry_at
+
+
 class ApiKeyAuth:
     """Google AI Studio API key -> generativelanguage.googleapis.com."""
     method = "api_key"
@@ -148,6 +156,8 @@ class GeminiClient:
                 continue
             if r.status_code in (429, 500, 502, 503, 504) and attempt < config.GEMINI_MAX_RETRIES:
                 delay = _retry_delay(r, attempt)
+                if r.status_code == 429 and delay > config.GEMINI_MAX_WAIT_S:
+                    raise _quota_error(r, delay)
                 if r.status_code == 429:
                     self.limiter.on_rate_limited()
                 log.warning("Gemini %s, retrying in %.1fs (pace now %.1f req/min): %s",
@@ -216,6 +226,23 @@ def _retry_delay(r: httpx.Response, attempt: int) -> float:
     except (ValueError, AttributeError):
         pass
     return min(60.0, 2 ** attempt + random.random())
+
+
+def _quota_error(r: httpx.Response, delay: float) -> GeminiQuotaError:
+    import time
+    from datetime import datetime
+    limit = ""
+    try:
+        for d in (r.json().get("error") or {}).get("details", []):
+            for v in d.get("violations", []):
+                if v.get("quotaValue"):
+                    limit = f" ({v['quotaValue']} requests/day for this model)"
+    except (ValueError, AttributeError):
+        pass
+    at = time.time() + delay
+    when = datetime.fromtimestamp(at).strftime("%H:%M")
+    return GeminiQuotaError(f"Google Gemini daily quota reached{limit}. MyTTS continues automatically "
+                            f"at {when} while the app is running (or press Resume after {when}).", at)
 
 
 def _error_from(r: httpx.Response) -> GeminiError:

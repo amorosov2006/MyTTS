@@ -77,8 +77,11 @@ GEMINI_MAX_RPM = 120.0
 GEMINI_TIMEOUT_S = 180
 GEMINI_MAX_RETRIES = 8
 # Larger segments than the local model: a paragraph reads with better flow and costs fewer requests
-GEMINI_SEGMENT_TARGET_CHARS = 700
-GEMINI_SEGMENT_MAX_CHARS = 1400
+# ~3.5 min of audio per request: the paid Tier 1 quota is only 100 requests/day per model, and
+# Google warns that voice can drift in outputs longer than "a few minutes".
+GEMINI_SEGMENT_TARGET_CHARS = 2400
+GEMINI_SEGMENT_MAX_CHARS = 3000
+GEMINI_MAX_WAIT_S = 300  # a 429 asking to wait longer than this = daily quota: pause the job instead
 GEMINI_DEFAULT_STYLE = {
     "ru": "Спокойное, тёплое, выразительное чтение аудиокниги профессиональным диктором.",
     "en": "Calm, warm, expressive audiobook narration by a professional narrator.",

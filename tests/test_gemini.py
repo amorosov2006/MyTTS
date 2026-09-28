@@ -235,3 +235,32 @@ def test_cloud_segments_join_paragraphs():
     assert [s.is_title for s in segs] == [True, False, False]          # title, block, after scene break
     assert segs[1].text.count("\n\n") == 2                             # paragraph breaks kept
     assert [s.id for s in segs] == ["c001s0000", "c001s0001", "c001s0002"]
+
+
+async def test_daily_quota_pauses_job_and_schedules_resume(scheduler_factory, sample_book_txt, monkeypatch):
+    """A 429 asking to wait hours = daily quota: pause with a clear message, auto-resume later."""
+    calls = {"n": 0}
+
+    async def handler(request):
+        calls["n"] += 1
+        return httpx.Response(429, json={"error": {"message": "quota", "details": [
+            {"violations": [{"quotaValue": "100"}]}, {"retryDelay": "68900s"}]}})
+
+    sch = scheduler_factory(FakeWorker())
+    sch.cloud_worker = GeminiWorker(key_fn=lambda: "k", transport=httpx.MockTransport(handler))
+    scheduled = []
+    monkeypatch.setattr(sch, "_schedule_auto_resume", lambda job_id, at: scheduled.append((job_id, at)))
+    await sch.start()
+    try:
+        info = await sch.create_job(sample_book_txt, "sample_book.txt")
+        sch.update_settings(info.id, JobSettings(engine=EngineName.gemini))
+        await sch.start_job(info.id)
+        for _ in range(100):
+            if sch.get_job(info.id).status == JobStatus.paused:
+                break
+            await asyncio.sleep(0.05)
+        job = sch.get_job(info.id)
+        assert job.status == JobStatus.paused and "daily quota" in job.error and "100 requests/day" in job.error
+        assert scheduled and scheduled[0][0] == info.id
+    finally:
+        await sch.stop()

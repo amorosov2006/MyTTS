@@ -36,6 +36,7 @@ class GeminiWorker:
         self._busy = 0
         self._message: Optional[str] = None
         self.requests = 0
+        self.retry_at: Optional[float] = None  # set when the daily quota is exhausted
 
     def _get_client(self) -> GeminiClient:
         auth = self._auth_fn()
@@ -115,8 +116,10 @@ class GeminiWorker:
             self._busy -= 1
         if auth_error:
             self._message = str(auth_error[0])
+            self.retry_at = getattr(auth_error[0], "retry_at", None)
             raise RuntimeError(str(auth_error[0]))  # scheduler pauses the job with this message
         self._message = None
+        self.retry_at = None
         return list(results)
 
     async def design_voice(self, description: str, lang: Lang, text: str, out_wav: str) -> float:

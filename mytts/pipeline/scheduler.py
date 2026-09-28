@@ -512,6 +512,9 @@ class Scheduler:
                 self.store.mark_segment_pending(job_id, r["id"])
                 self._inflight.discard((job_id, r["id"]))
             self._pause_job_with_error(job_id, f"TTS error: {e}")
+            retry_at = getattr(self.cloud_worker, "retry_at", None) if settings.engine == EngineName.gemini else None
+            if retry_at:
+                self._schedule_auto_resume(job_id, retry_at)
             return
         self._retries.pop(job_id, None)
         elapsed = time.monotonic() - t0
@@ -520,6 +523,19 @@ class Scheduler:
         for r, res in zip(rows, results):
             self._track_bg(asyncio.ensure_future(self._post_process(job_id, r, res, settings)))
         self._wakeup.set()
+
+    def _schedule_auto_resume(self, job_id: str, at_epoch: float) -> None:
+        """Quota pauses resume by themselves once the quota window resets (in this process)."""
+        delay = max(1.0, at_epoch - time.time() + 30)
+
+        async def resume_later() -> None:
+            await asyncio.sleep(delay)
+            info = self.store.get_job_info(job_id)
+            if info and info.status == JobStatus.paused and info.error and "quota" in info.error:
+                self._log(job_id, "info", "Gemini quota window reset — resuming")
+                await self.resume_job(job_id)
+
+        self._track_bg(asyncio.ensure_future(resume_later()))
 
     def _pause_job_with_error(self, job_id: str, message: str) -> None:
         self._run_queue = [j for j in self._run_queue if j != job_id]

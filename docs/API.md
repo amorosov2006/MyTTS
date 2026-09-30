@@ -97,7 +97,7 @@ MyTTS is offline by default. Google Gemini TTS is used only for a book whose `Jo
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | `/api/engines` | — | `[{id:"local",...}, {id:"gemini", available, key:{configured,last4,source}, default_model, models:[{id,label,usd_per_m_audio_tokens}] (Gemini 3.8 TTS models only), usd_per_m_input_tokens, audio_tokens_per_second, default_voice:{ru,en}, default_style:{ru,en}, voices:[{id,name,style,gender}]}]` |
-| GET | `/api/keys/gemini` | — | `{configured, last4, source: "file"\|"GEMINI_API_KEY"\|"GOOGLE_API_KEY"\|null}` |
+| GET | `/api/keys/gemini` | — | `{configured, last4, source: "file"\|"GEMINI_API_KEY"\|null}` |
 | PUT | `/api/keys/gemini` | `{api_key}` | Validated with Google first. Returns `200` status, `400 {detail}` if the key is rejected, or `502` if Google is unreachable |
 | DELETE | `/api/keys/gemini` | — | `204` |
 | POST | `/api/engines/gemini/preview` | `{voice, lang, style?, model?}` | `audio/wav`: one short sentence, cached on disk. Errors: `400` if the key is missing or bad, `404` for an unknown voice, `502` for a Google error |

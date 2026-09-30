@@ -7,13 +7,10 @@ import subprocess
 import base64
 import zipfile
 from pathlib import Path
-from io import BytesIO
-from datetime import datetime
 
 # Third-party imports
 import pymupdf as fitz  # PyMuPDF
-from reportlab.lib.pagesizes import A5
-from reportlab.lib.units import cm, mm
+from reportlab.lib.units import cm
 from reportlab.pdfgen import canvas
 from docx import Document
 from PIL import Image, ImageDraw, ImageFont
@@ -126,7 +123,7 @@ def generate_cover_image(title: str, author: str, output_path: str) -> bytes:
 def create_epub(book: dict, output_path: str) -> None:
     """Create an EPUB file using ebooklib."""
     if not HAS_EPUB:
-        print(f"    ✗ EPUB skipped (ebooklib not available)")
+        print("    ✗ EPUB skipped (ebooklib not available)")
         return
 
     try:
@@ -532,9 +529,9 @@ def convert_with_textutil(html_path: str, format_type: str) -> str:
             timeout=30
         )
         return output_path
-    except subprocess.CalledProcessError as e:
+    except subprocess.CalledProcessError:
         return None
-    except Exception as e:
+    except Exception:
         return None
 
 
@@ -753,7 +750,7 @@ def main():
     print(f"{'=' * 60}")
 
     if total_size > 3 * 1024 * 1024:
-        print(f"Warning: total size exceeds 3 MB limit!")
+        print("Warning: total size exceeds 3 MB limit!")
     else:
         print(f"✓ Within 3 MB limit ({(3 * 1024 * 1024 - total_size) / 1024:.1f} KB remaining)")
 

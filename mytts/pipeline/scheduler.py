@@ -23,7 +23,7 @@ from typing import Optional
 from mytts import config
 from mytts.contracts import (
     Book, Chapter, EngineName, Event, JobInfo, JobSettings, JobStatus, Lang, OutputFormat, Progress,
-    SampleInfo, SampleRequest, Segment, SynthesisItem, SynthesisResult, TTSWorker,
+    SampleInfo, SampleRequest, SynthesisItem, SynthesisResult, TTSWorker,
     WorkerCrashed,
 )
 from mytts.pipeline import cleanup
@@ -98,7 +98,8 @@ class Scheduler:
         self._finalizing: set[str] = set()
         self._inflight: set[tuple[str, str]] = set()    # (job_id, segment_id) synth/post-processing
         self._assembling: set[tuple[str, int]] = set()  # (job_id, chapter) being assembled now
-        self._preparing: set[str] = set()               # jobs inside start_job (double-click guard)
+        self._preparing: set[str] = set()
+        self._auto_resume: dict[str, asyncio.Task] = {}  # job_id -> timer (quota / outage pauses)               # jobs inside start_job (double-click guard)
         self._wakeup = asyncio.Event()
         self._task: Optional[asyncio.Task] = None
         self._bg_tasks: set[asyncio.Task] = set()
@@ -131,7 +132,7 @@ class Scheduler:
             except asyncio.TimeoutError:
                 self._task.cancel()
                 await asyncio.gather(self._task, return_exceptions=True)
-        for task in list(self._cleanup_tasks):
+        for task in list(self._cleanup_tasks) + list(self._auto_resume.values()):
             task.cancel()
         if self._bg_tasks:
             await asyncio.wait(list(self._bg_tasks), timeout=timeout_s)
@@ -209,7 +210,9 @@ class Scheduler:
         if bj.get("cover"):
             bj["cover"] = base64.b64decode(bj["cover"])
         book = Book.model_validate(bj)
-        upload = next(self.store.job_workdir(job_id).glob("upload.*"))
+        upload = next(self.store.job_workdir(job_id).glob("upload.*"), None)
+        if upload is None:
+            raise ConflictError("The original upload of this book is missing; upload it again")
         new_id_ = await asyncio.to_thread(self.store.create_job, book, info.settings, upload)
         self.store.update_chapters_meta(
             new_id_, [{"index": c.index, "title": c.title, "include": c.include} for c in info.chapters])
@@ -221,8 +224,14 @@ class Scheduler:
     def list_jobs(self) -> list[JobInfo]:
         return self.store.list_jobs()
 
+    def _require_idle(self, job_id: str) -> None:
+        if job_id in self._preparing:
+            raise ConflictError("The book is being prepared right now; try again in a moment")
+
     async def delete_job(self, job_id: str) -> None:
         self._require_job(job_id)
+        self._require_idle(job_id)
+        self._cancel_auto_resume(job_id)
         self._run_queue = [j for j in self._run_queue if j != job_id]
         await asyncio.to_thread(self.store.delete_job, job_id)
 
@@ -230,6 +239,7 @@ class Scheduler:
         info = self._require_job(job_id)
         if info.status not in (JobStatus.parsed, JobStatus.paused):
             raise ConflictError(f"cannot edit chapters in status {info.status.value}")
+        self._require_idle(job_id)
         self.store.update_chapters_meta(job_id, updates)
         return self.store.get_job_info(job_id)
 
@@ -237,6 +247,11 @@ class Scheduler:
         info = self._require_job(job_id)
         if info.status not in (JobStatus.parsed, JobStatus.paused):
             raise ConflictError(f"cannot change settings in status {info.status.value}")
+        self._require_idle(job_id)
+        if settings.engine != info.settings.engine and self.store.chapter_indexes_with_segments(job_id):
+            raise ConflictError("The engine can't change after conversion started (segment sizes "
+                                "differ); use \"Convert again\" for the other engine")
+        self._cancel_auto_resume(job_id)
         old_hash = self.store.get_settings_hash(job_id)
         self.store.set_settings(job_id, settings)
         if info.sample_approved and self.store.get_settings_hash(job_id) != old_hash:
@@ -271,7 +286,7 @@ class Scheduler:
             **self._segment_sizes(settings),
         )
         if segments:
-            self.store.add_segments(job_id, cm.index, segments)
+            self.store.add_missing_segments(job_id, cm.index, segments)
             self.store.update_chapter_state(job_id, cm.index, status="pending")
         else:
             self.store.update_chapter_state(job_id, cm.index, status="skipped", segments_total=0)
@@ -283,19 +298,23 @@ class Scheduler:
         book_json = self.store.read_book_json(job_id)
         prepared = self.store.chapter_indexes_with_segments(job_id)
         for cm in info.chapters:
-            if cm.include and cm.index not in prepared and cm.status not in ("done", "skipped"):
+            if cm.include and cm.status != "done" and (cm.index not in prepared or cm.status == "skipped"):
                 await self._prepare_chapter(job_id, cm, book_json, info.settings)
-            elif not cm.include and cm.index in prepared:
+            elif not cm.include and cm.index in prepared and cm.status != "done":
                 self.store.delete_pending_segments(job_id, cm.index)
                 self.store.update_chapter_state(job_id, cm.index, status="skipped")
 
     async def _start_job(self, job_id: str, info: JobInfo) -> JobInfo:
         book_json = self.store.read_book_json(job_id)
+        try:
+            await asyncio.to_thread(self.store.claim_output_dir, job_id, info.settings,
+                                    book_json.get("author"), book_json["title"])
+        except OSError as e:
+            raise ConflictError(f"The output folder can't be used ({e}); choose another one") from e
         for cm in self.store.get_chapters(job_id):
             if cm.include:
                 await self._prepare_chapter(job_id, cm, book_json, info.settings)
         self.store.update_job(job_id, status=JobStatus.queued)
-        self.store.claim_output_dir(job_id, info.settings, book_json.get("author"), book_json["title"])
         self._job_stats[job_id] = {"started_at": time.monotonic(), "busy_s": 0.0}
         self._update_progress(job_id)
         if job_id not in self._run_queue:
@@ -309,6 +328,7 @@ class Scheduler:
         if info.status not in (JobStatus.queued, JobStatus.running):
             raise ConflictError(f"cannot pause a job in status {info.status.value}")
         self._run_queue = [j for j in self._run_queue if j != job_id]
+        self._cancel_auto_resume(job_id)
         self.store.update_job(job_id, status=JobStatus.paused)
         self._publish_job(job_id, force=True)
         return self.store.get_job_info(job_id)
@@ -322,6 +342,10 @@ class Scheduler:
             await self._sync_chapter_selection(job_id)
         finally:
             self._preparing.discard(job_id)
+        info = self._require_job(job_id)
+        if info.status != JobStatus.paused:
+            raise ConflictError(f"cannot resume a job in status {info.status.value}")
+        self._cancel_auto_resume(job_id)
         self.store.reset_running_segments(
             job_id, exclude=frozenset(s for j, s in self._inflight if j == job_id))
         self._unstick_chapters(job_id)
@@ -338,6 +362,8 @@ class Scheduler:
         info = self._require_job(job_id)
         if info.status not in (JobStatus.queued, JobStatus.running, JobStatus.paused):
             raise ConflictError(f"cannot cancel a job in status {info.status.value}")
+        self._require_idle(job_id)
+        self._cancel_auto_resume(job_id)
         self._run_queue = [j for j in self._run_queue if j != job_id]
         self._job_stats.pop(job_id, None)
         self.store.update_job(job_id, status=JobStatus.cancelled)
@@ -532,32 +558,55 @@ class Scheduler:
                 self.store.mark_segment_pending(job_id, r["id"])
                 self._inflight.discard((job_id, r["id"]))
             self._pause_job_with_error(job_id, f"TTS error: {e}")
-            retry_at = getattr(self.cloud_worker, "retry_at", None) if settings.engine == EngineName.gemini else None
-            if retry_at:
-                self._schedule_auto_resume(job_id, retry_at)
             return
         self._retries.pop(job_id, None)
         elapsed = time.monotonic() - t0
         stats = self._job_stats.setdefault(job_id, {"started_at": time.monotonic(), "busy_s": 0.0})
         stats["busy_s"] = stats.get("busy_s", 0.0) + elapsed
+        deferred = 0
         for r, res in zip(rows, results):
+            if res.retry_later:  # job-level stop mid-batch: keep what finished, re-queue the rest
+                self.store.mark_segment_pending(job_id, r["id"])
+                self._inflight.discard((job_id, r["id"]))
+                deferred += 1
+                continue
             self._track_bg(asyncio.ensure_future(self._post_process(job_id, r, res, settings)))
+        if deferred:
+            worker = self._engine_for(settings, Lang(rows[0]["lang"]))[0]
+            reason = getattr(worker, "pause_reason", None) or "the TTS engine asked to stop"
+            self._pause_job_with_error(job_id, reason)
+            if getattr(worker, "retry_at", None):
+                self._schedule_auto_resume(job_id, worker.retry_at)
         self._wakeup.set()
 
     def _schedule_auto_resume(self, job_id: str, at_epoch: float) -> None:
-        """Quota pauses resume by themselves once the quota window resets (in this process)."""
+        """Quota/outage pauses continue by themselves when Google says it's possible again
+        (in this process). One timer per job; user actions and settings changes cancel it."""
+        self._cancel_auto_resume(job_id)
         delay = max(1.0, at_epoch - time.time() + 30)
+        expected_error = (self.store.get_job_info(job_id) or JobInfo.model_construct(error=None)).error
 
         async def resume_later() -> None:
             await asyncio.sleep(delay)
             info = self.store.get_job_info(job_id)
-            if info and info.status == JobStatus.paused and info.error and "quota" in info.error:
-                self._log(job_id, "info", "Gemini quota window reset — resuming")
+            if not (info and info.status == JobStatus.paused and info.error == expected_error
+                    and info.settings.engine == EngineName.gemini):
+                return  # the user resumed, cancelled, deleted or changed the job meanwhile
+            try:
+                self._log(job_id, "info", "Continuing after the Gemini pause")
                 await self.resume_job(job_id)
+            except Exception:
+                log.exception("auto-resume failed")
 
         task = asyncio.ensure_future(resume_later())
-        self._cleanup_tasks.add(task)
-        task.add_done_callback(self._cleanup_tasks.discard)
+        self._auto_resume[job_id] = task
+        task.add_done_callback(lambda t: self._auto_resume.pop(job_id, None)
+                               if self._auto_resume.get(job_id) is t else None)
+
+    def _cancel_auto_resume(self, job_id: str) -> None:
+        task = self._auto_resume.pop(job_id, None)
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
 
     def _pause_job_with_error(self, job_id: str, message: str) -> None:
         self._run_queue = [j for j in self._run_queue if j != job_id]
@@ -639,7 +688,6 @@ class Scheduler:
         self._publish_job(job_id)
 
     def _chars_done(self, job_id: str) -> int:
-        totals = self.store.job_segment_totals(job_id)
         # crude proxy: use audio_s * FALLBACK_CHARS_PER_S if no better signal is stored.
         return int(self.store.job_audio_seconds(job_id) * FALLBACK_CHARS_PER_S)
 
@@ -669,7 +717,7 @@ class Scheduler:
             return
         chapters = self.store.get_chapters(job_id)
         cs = next((c for c in chapters if c.index == chapter), None)
-        if cs is None or cs.status in ("done", "assembling"):
+        if cs is None or not cs.include or cs.status in ("done", "assembling"):
             return
         self.store.update_chapter_state(job_id, chapter, status="assembling")
         self._publish_job(job_id, force=True)
@@ -790,6 +838,8 @@ class Scheduler:
             self._wakeup.set()
             return
         for r, res in zip(rows, results):
+            if res.retry_later:
+                res = res.model_copy(update={"ok": False, "error": res.error or "stopped"})
             self._track_bg(asyncio.ensure_future(
                 self._post_process_sample(sample_id, job_id, r, res, settings)))
         self._wakeup.set()

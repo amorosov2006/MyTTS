@@ -101,6 +101,8 @@ def _keep_hyphen(head: str, tail: str, vocab: tuple[set[str], set[str]]) -> bool
     "кое-кто", "Санкт-Петербург") or a syllable break ("толь-ко")? The book's own vocabulary
     decides first; then Russian particle rules; default: syllable break."""
     plain, hyphenated = vocab
+    if head[-1:].isdigit() or tail[:1].isdigit():
+        return True  # "1941-" + "1945" is a range, never one number
     h, t = head.lower(), tail.lower()
     if f"{h}-{t}" in hyphenated and f"{h}{t}" not in plain:
         return True
@@ -142,7 +144,7 @@ def _lines_to_paragraphs(lines: list[str], vocab: tuple[set[str], set[str]] | No
     median_len = sorted(lengths)[len(lengths) // 2] if lengths else 0
     paragraphs: list[str] = []
     cur: list[str] = []
-    for i, text in enumerate(lines):
+    for text in lines:
         cur.append(text)
         is_short = len(text) < median_len * 0.72 if median_len else False
         if is_short:

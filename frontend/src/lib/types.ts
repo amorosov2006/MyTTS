@@ -57,7 +57,7 @@ export interface JobSettings {
   pause_sentence_ms: number;
 }
 
-export type GeminiKeySource = "file" | "GEMINI_API_KEY" | "GOOGLE_API_KEY" | null;
+export type GeminiKeySource = "file" | "GEMINI_API_KEY" | null;
 
 export interface GeminiKeyStatus {
   configured: boolean;

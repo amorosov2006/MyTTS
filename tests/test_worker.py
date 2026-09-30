@@ -143,7 +143,6 @@ async def test_process_worker_stop_leaves_no_child(voice_ru):
     await worker.stop()
     assert worker._proc is None
     import os
-    import signal
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
 

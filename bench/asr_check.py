@@ -20,7 +20,6 @@ from pathlib import Path
 
 os.environ.setdefault("HF_HOME", str(Path(__file__).resolve().parent.parent / "models" / "hf"))
 
-import numpy as np
 import soundfile as sf
 
 MODEL = "mlx-community/whisper-large-v3-turbo"

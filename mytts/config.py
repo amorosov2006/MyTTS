@@ -82,6 +82,7 @@ GEMINI_MAX_RETRIES = 8
 GEMINI_SEGMENT_TARGET_CHARS = 2400
 GEMINI_SEGMENT_MAX_CHARS = 3000
 GEMINI_MAX_WAIT_S = 300  # a 429 asking to wait longer than this = daily quota: pause the job instead
+GEMINI_CALL_DEADLINE_S = 900  # one segment never blocks the queue longer than this
 GEMINI_DEFAULT_STYLE = {
     "ru": "Спокойное, тёплое, выразительное чтение аудиокниги профессиональным диктором.",
     "en": "Calm, warm, expressive audiobook narration by a professional narrator.",

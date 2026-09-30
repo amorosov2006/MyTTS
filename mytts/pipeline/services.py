@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
-from mytts.contracts import Book, Chapter, Lang, Segment
+from mytts.contracts import Book, Lang, Segment
 
 
 def _lazy_ingest_parse_book():

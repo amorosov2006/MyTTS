@@ -16,7 +16,7 @@ from mytts import config, keystore
 from mytts.api.app import create_app
 from mytts.contracts import EngineName, JobSettings, JobStatus, Lang, SynthesisItem, SynthesisParams
 from mytts.pipeline.cloud_worker import GeminiWorker, gemini_voice
-from mytts.tts.gemini import GeminiAuthError, GeminiClient, GeminiError
+from mytts.tts.gemini import GeminiAuthError, GeminiClient
 from tests.fixtures.fake_worker import FakeWorker
 
 
@@ -132,11 +132,12 @@ async def test_worker_retries_implausibly_short_audio(tmp_path):
     assert res[0].ok and res[0].attempts == 2 and len(fake.bodies) == 2
 
 
-async def test_worker_auth_error_raises_for_the_scheduler(tmp_path):
+async def test_worker_auth_error_defers_items_and_reports_why(tmp_path):
     w = GeminiWorker(key_fn=lambda: "wrong", transport=httpx.MockTransport(FakeGoogle()))
-    with pytest.raises(RuntimeError, match="API key"):
-        await w.synthesize(_items(tmp_path, ["Текст."]), gemini_voice("Kore", Lang.ru, "m"),
-                           SynthesisParams(), qa=False)
+    res = await w.synthesize(_items(tmp_path, ["Текст.", "Ещё."]), gemini_voice("Kore", Lang.ru, "m"),
+                             SynthesisParams(), qa=False)
+    assert all(r.retry_later and not r.ok for r in res)
+    assert "API key" in w.pause_reason
 
 
 # ------------------------------------------------------------------------------- scheduler e2e

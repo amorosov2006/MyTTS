@@ -5,7 +5,7 @@ import re
 import unicodedata
 
 _SOFT_HYPHEN = "­"
-_ZERO_WIDTH = ("​", "‌", "‍", "﻿")
+_ZERO_WIDTH = ("\u200b", "‌", "‍", "﻿")
 _NBSP = " "
 
 _PAGE_NUM_RE = re.compile(r"^[\-–—\s]*(?:page|стр\.?|с\.)?\s*\d{1,4}\s*[\-–—]*\s*$", re.IGNORECASE)

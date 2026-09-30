@@ -26,7 +26,7 @@ from typing import Any, Optional
 
 from mytts import config
 from mytts.contracts import (
-    Book, Chapter, ChapterState, JobInfo, JobSettings, JobStatus, Lang, Progress,
+    Book, ChapterState, JobInfo, JobSettings, JobStatus, Lang, Progress,
     SampleInfo, Segment,
 )
 
@@ -366,6 +366,21 @@ class Store:
                 ],
             )
         self.update_chapter_state(job_id, chapter, segments_total=len(segments), segments_done=0)
+
+    def add_missing_segments(self, job_id: str, chapter: int, segments: list[Segment]) -> None:
+        """Like add_segments, but never replaces existing rows (a re-ticked chapter keeps the
+        segments it already finished; same settings -> same deterministic segment ids)."""
+        with self._lock, self._conn:
+            self._conn.executemany(
+                "INSERT OR IGNORE INTO segments (job_id, id, chapter, idx, source, text, lang,"
+                " pause_after_ms, is_title, status) VALUES (?,?,?,?,?,?,?,?,?,'pending')",
+                [(job_id, s.id, chapter, s.index, s.source, s.text, s.lang.value, s.pause_after_ms,
+                  int(s.is_title)) for s in segments],
+            )
+            total, done = self._conn.execute(
+                "SELECT COUNT(*), SUM(status IN ('done','failed')) FROM segments WHERE job_id=? AND chapter=?",
+                (job_id, chapter)).fetchone()
+        self.update_chapter_state(job_id, chapter, segments_total=total, segments_done=done or 0)
 
     def chapter_indexes_with_segments(self, job_id: str) -> set[int]:
         with self._lock:

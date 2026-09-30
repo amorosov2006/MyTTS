@@ -438,16 +438,16 @@ class ProcessWorker:
             try:
                 resp = await asyncio.wait_for(
                     asyncio.to_thread(self._send_recv, req), timeout=self.call_timeout_s)
-            except asyncio.TimeoutError:
+            except asyncio.TimeoutError as e:
                 if gen == self._gen:
                     await self._crash(f"call timed out after {self.call_timeout_s}s")
-                raise WorkerCrashed(f"call timed out after {self.call_timeout_s}s")
+                raise WorkerCrashed(f"call timed out after {self.call_timeout_s}s") from e
             except (EOFError, OSError, BrokenPipeError) as e:
                 # The supervisor may already have killed and restarted the child (gen changed):
                 # don't kill the fresh one.
                 if gen == self._gen and self._state != "restarting":
                     await self._crash(f"worker connection lost: {e}")
-                raise WorkerCrashed(self._message or f"worker connection lost: {e}")
+                raise WorkerCrashed(self._message or f"worker connection lost: {e}") from e
 
             if self._state == "busy":
                 self._state = "idle"

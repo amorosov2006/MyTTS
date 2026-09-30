@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable
 
 import numpy as np
 import soundfile as sf

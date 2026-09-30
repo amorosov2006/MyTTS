@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -70,10 +70,10 @@ class GeminiKeyBody(BaseModel):
 
 
 class GeminiPreviewBody(BaseModel):
-    voice: str
+    voice: str = Field(max_length=40)
     lang: Lang = Lang.ru
-    style: str = ""
-    model: str = ""
+    style: str = Field("", max_length=500)
+    model: str = Field("", max_length=80)
 
 
 def create_app(services: Optional[Services] = None, worker: Optional[TTSWorker] = None,
@@ -101,6 +101,7 @@ def create_app(services: Optional[Services] = None, worker: Optional[TTSWorker] 
         cloud_worker = GeminiWorker()  # makes no network call until a job/preview uses it
     scheduler = Scheduler(store, services, bus, worker, voices=voices, cloud_worker=cloud_worker)
     bg_tasks: set[asyncio.Task] = set()
+    preview_locks: dict[str, asyncio.Lock] = {}
 
     def _track(task: "asyncio.Task") -> None:
         bg_tasks.add(task)
@@ -277,28 +278,35 @@ def create_app(services: Optional[Services] = None, worker: Optional[TTSWorker] 
     async def gemini_preview(body: GeminiPreviewBody):
         """A short sentence in a Gemini voice (one API request), cached on disk."""
         import hashlib
-        from mytts.tts.gemini import VOICES, GeminiAuthError, GeminiError
+        from mytts.tts.gemini import VOICES
         if body.voice not in VOICES:
             raise HTTPException(404, "unknown Gemini voice")
         model = cloud_worker.resolve_model(body.model)
         style = body.style or config.GEMINI_DEFAULT_STYLE[body.lang.value]
         key = hashlib.sha256(f"{model}|{body.voice}|{body.lang.value}|{style}".encode()).hexdigest()[:24]
         path = config.DATA_DIR / "gemini_previews" / f"{key}.wav"
-        if not path.exists():
-            from mytts.pipeline.cloud_worker import gemini_voice
-            path.parent.mkdir(parents=True, exist_ok=True)
-            item = SynthesisItem(segment_id="preview", text=_PREVIEW_TEXT[body.lang.value],
-                                 lang=body.lang, out_wav=str(path))
-            params = SynthesisParams(instruction=style)
-            try:
-                res = await cloud_worker.synthesize([item], gemini_voice(body.voice, body.lang, model),
-                                                    params, qa=False)
-            except (RuntimeError, GeminiError) as e:
-                raise HTTPException(400 if isinstance(e, GeminiAuthError) else 502, str(e))
-            if not res[0].ok:
-                raise HTTPException(502, res[0].error or "Gemini preview failed")
-            from mytts.pipeline.cleanup import prune_preview_cache
-            await asyncio.to_thread(prune_preview_cache)
+        lock = preview_locks.setdefault(key, asyncio.Lock())  # same preview twice = one API call
+        async with lock:
+            if not path.exists():
+                from mytts.pipeline.cloud_worker import gemini_voice
+                path.parent.mkdir(parents=True, exist_ok=True)
+                tmp = path.with_name(f"{key}.{uuid.uuid4().hex[:8]}.part")
+                item = SynthesisItem(segment_id="preview", text=_PREVIEW_TEXT[body.lang.value],
+                                     lang=body.lang, out_wav=str(tmp))
+                try:
+                    res = await cloud_worker.synthesize(
+                        [item], gemini_voice(body.voice, body.lang, model),
+                        SynthesisParams(instruction=style), qa=False)
+                    if res[0].retry_later:  # key / billing / quota: the user must act or wait
+                        raise HTTPException(400, cloud_worker.pause_reason or res[0].error or "Gemini stopped")
+                    if not res[0].ok:
+                        raise HTTPException(502, res[0].error or "Gemini preview failed")
+                    os.replace(tmp, path)  # never cache a half-written file
+                finally:
+                    Path(tmp).unlink(missing_ok=True)
+                from mytts.pipeline.cleanup import prune_preview_cache
+                await asyncio.to_thread(prune_preview_cache)
+        preview_locks.pop(key, None)
         return FileResponse(path, media_type="audio/wav")
 
     @app.get("/api/formats")

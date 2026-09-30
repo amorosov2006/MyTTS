@@ -50,7 +50,7 @@ async def test_sample_history_is_bounded(scheduler_factory, sample_book_txt):
         info = await sch.create_job(sample_book_txt, "sample_book.txt")
         for _ in range(cleanup.KEEP_SAMPLES_PER_JOB + 3):
             smp = await sch.create_sample(info.id, SampleRequest(seconds=10))
-            await _wait(lambda: sch.get_sample(info.id, smp.id).status == "done")
+            await _wait(lambda sid=smp.id: sch.get_sample(info.id, sid).status == "done")
         assert len(sch.list_samples(info.id)) == cleanup.KEEP_SAMPLES_PER_JOB
         dirs = [d for d in (config.DATA_DIR / "jobs" / info.id / "samples").iterdir()]
         assert len(dirs) == cleanup.KEEP_SAMPLES_PER_JOB

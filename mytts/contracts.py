@@ -12,7 +12,6 @@ Data flow:
 from __future__ import annotations
 
 from enum import Enum
-from pathlib import Path
 from typing import Literal, Optional, Protocol, Sequence, runtime_checkable
 
 import numpy as np
@@ -164,6 +163,8 @@ class SynthesisResult(BaseModel):
     cer: Optional[float] = None       # None when QA disabled
     transcript: Optional[str] = None
     error: Optional[str] = None
+    retry_later: bool = False         # not attempted / interrupted by a job-level stop: re-queue,
+                                      # don't mark failed (the worker's pause_reason says why)
 
 
 class WorkerStatus(BaseModel):

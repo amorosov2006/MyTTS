@@ -44,16 +44,26 @@ class GeminiError(Exception):
     """Any Gemini failure; message is safe to show to the user (never contains the key)."""
 
 
-class GeminiAuthError(GeminiError):
-    """Key missing/invalid/unauthorized or billing not enabled — retrying won't help."""
+class GeminiPause(GeminiError):
+    """Stop the whole job (not just one segment): retrying the next segment won't help now.
+    retry_at: epoch seconds when it may work again (None = needs the user)."""
+    retry_at: float | None = None
 
-
-class GeminiQuotaError(GeminiAuthError):
-    """Daily quota exhausted; retry_at = epoch seconds when Google says requests work again."""
-
-    def __init__(self, message: str, retry_at: float):
+    def __init__(self, message: str, retry_at: float | None = None):
         super().__init__(message)
         self.retry_at = retry_at
+
+
+class GeminiAuthError(GeminiPause):
+    """Key missing/invalid/unauthorized, billing not enabled or prepaid balance empty."""
+
+
+class GeminiQuotaError(GeminiPause):
+    """Daily quota exhausted; retry_at = when Google says requests work again."""
+
+
+class GeminiUnavailable(GeminiPause):
+    """Network down / Google failing or rate-limiting beyond our retries."""
 
 
 class ApiKeyAuth:
@@ -140,32 +150,57 @@ class GeminiClient:
             raise _error_from(r)
 
     async def synthesize(self, text: str, *, voice: str, style: str, model: str) -> np.ndarray:
-        """float32 mono audio at config.SAMPLE_RATE (24 kHz)."""
+        """float32 mono audio at config.SAMPLE_RATE (24 kHz). Raises GeminiPause subclasses for
+        job-level problems, plain GeminiError for a bad result of this one text."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + config.GEMINI_CALL_DEADLINE_S
         known = model in self._dialect
         d = self._dialect.get(model, 0)
+        last = "no response"
         for attempt in range(config.GEMINI_MAX_RETRIES + len(DIALECTS)):
+            if loop.time() > deadline:
+                break
             await self.limiter.wait()
-            r = await self._client.post(self.auth.model_path(model), headers=await self.auth.headers(),
-                                        json=_body(text, voice, style, *DIALECTS[d]))
+            try:
+                r = await self._client.post(self.auth.model_path(model), headers=await self.auth.headers(),
+                                            json=_body(text, voice, style, *DIALECTS[d]))
+            except httpx.TransportError as e:  # network blip, DNS, timeout
+                last = f"network error: {type(e).__name__}: {e}"
+                delay = min(config.GEMINI_MAX_WAIT_S, 2 ** attempt + random.random())
+                log.warning("Gemini %s, retrying in %.1fs", last, delay)
+                await asyncio.sleep(delay)
+                continue
             if r.status_code == 200:
                 self._dialect[model] = d
                 self.limiter.on_success()
-                return _decode(r.json())
+                try:
+                    return _decode(r.json())
+                except GeminiError:
+                    raise
+                except Exception as e:  # malformed JSON / undecodable audio
+                    raise GeminiError(f"Gemini returned unreadable audio: {e}") from e
             if r.status_code == 400 and not known and d + 1 < len(DIALECTS) and not _is_auth(r):
                 d += 1  # field names rejected: try the next dialect
                 continue
-            if r.status_code in (429, 500, 502, 503, 504) and attempt < config.GEMINI_MAX_RETRIES:
+            if r.status_code == 429 and _is_daily_quota(r):
+                raise _quota_error(r, _retry_delay(r, attempt, default=3600.0))
+            if r.status_code in (429, 500, 502, 503, 504):
                 delay = _retry_delay(r, attempt)
-                if r.status_code == 429 and delay > config.GEMINI_MAX_WAIT_S:
-                    raise _quota_error(r, delay)
                 if r.status_code == 429:
+                    if delay > config.GEMINI_MAX_WAIT_S:
+                        raise _quota_error(r, delay)
                     self.limiter.on_rate_limited()
-                log.warning("Gemini %s, retrying in %.1fs (pace now %.1f req/min): %s",
-                            r.status_code, delay, self.limiter.rpm, _message(r)[:200])
+                delay = min(delay, config.GEMINI_MAX_WAIT_S)
+                last = f"{r.status_code}: {_message(r)[:200]}"
+                log.warning("Gemini %s, retrying in %.1fs (pace now %.1f req/min)", last, delay,
+                            self.limiter.rpm)
                 await asyncio.sleep(delay)
                 continue
             raise _error_from(r)
-        raise GeminiError("Gemini TTS failed after retries")
+        import time
+        raise GeminiUnavailable(f"Google Gemini is not responding normally ({last}). The job is paused "
+                                "and continues automatically in a few minutes.",
+                                time.time() + config.GEMINI_MAX_WAIT_S)
 
 
 def _body(text: str, voice: str, style: str, voice_form: str, style_form: str) -> dict:
@@ -185,10 +220,10 @@ def _decode(payload: dict) -> np.ndarray:
         parts = payload["candidates"][0]["content"]["parts"]
         inline = next(p.get("inlineData") or p.get("inline_data") for p in parts
                       if p.get("inlineData") or p.get("inline_data"))
-    except (KeyError, IndexError, StopIteration, TypeError):
+    except (KeyError, IndexError, StopIteration, TypeError) as e:
         reason = (payload.get("candidates") or [{}])[0].get("finishReason") or \
             (payload.get("promptFeedback") or {}).get("blockReason")
-        raise GeminiError(f"Gemini returned no audio ({reason or 'empty response'})")
+        raise GeminiError(f"Gemini returned no audio ({reason or 'empty response'})") from e
     raw = base64.b64decode(inline["data"])
     if raw[:4] == b"RIFF":
         audio, sr = sf.read(io.BytesIO(raw), dtype="float32")
@@ -216,7 +251,18 @@ def _is_auth(r: httpx.Response) -> bool:
     return r.status_code in (401, 403) or "api key" in msg.lower() or "API_KEY" in msg
 
 
-def _retry_delay(r: httpx.Response, attempt: int) -> float:
+def _is_daily_quota(r: httpx.Response) -> bool:
+    try:
+        for d in (r.json().get("error") or {}).get("details", []):
+            for v in d.get("violations", []):
+                if "PerDay" in (v.get("quotaId") or "") or "per_day" in (v.get("quotaMetric") or ""):
+                    return True
+    except (ValueError, AttributeError):
+        pass
+    return False
+
+
+def _retry_delay(r: httpx.Response, attempt: int, default: float | None = None) -> float:
     if r.headers.get("retry-after", "").isdigit():
         return float(r.headers["retry-after"])
     try:  # google.rpc.RetryInfo in error.details, e.g. {"retryDelay": "17s"}
@@ -225,7 +271,7 @@ def _retry_delay(r: httpx.Response, attempt: int) -> float:
                 return float(d["retryDelay"].rstrip("s")) + 0.5
     except (ValueError, AttributeError):
         pass
-    return min(60.0, 2 ** attempt + random.random())
+    return default if default is not None else min(60.0, 2 ** attempt + random.random())
 
 
 def _quota_error(r: httpx.Response, delay: float) -> GeminiQuotaError:
@@ -256,7 +302,9 @@ def _error_from(r: httpx.Response) -> GeminiError:
     if r.status_code == 404:
         return GeminiError(f"Gemini model not available for this connection: {msg}")
     if r.status_code == 429:
-        return GeminiError(f"Gemini rate limit / quota exceeded: {msg}")
+        import time
+        return GeminiUnavailable(f"Gemini rate limit / quota exceeded: {msg}",
+                                 time.time() + config.GEMINI_MAX_WAIT_S)
     if "billing" in msg.lower():
         return GeminiAuthError(f"Gemini: {msg}")
     return GeminiError(f"Gemini error {r.status_code}: {msg}")

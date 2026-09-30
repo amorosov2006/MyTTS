@@ -297,6 +297,8 @@ def create_app(services: Optional[Services] = None, worker: Optional[TTSWorker] 
                 raise HTTPException(400 if isinstance(e, GeminiAuthError) else 502, str(e))
             if not res[0].ok:
                 raise HTTPException(502, res[0].error or "Gemini preview failed")
+            from mytts.pipeline.cleanup import prune_preview_cache
+            await asyncio.to_thread(prune_preview_cache)
         return FileResponse(path, media_type="audio/wav")
 
     @app.get("/api/formats")
@@ -482,7 +484,8 @@ def create_app(services: Optional[Services] = None, worker: Optional[TTSWorker] 
         if row is None or row["job_id"] != job_id:
             raise HTTPException(404)
         for r in store.sample_segments_ordered(sample_id):
-            if r["id"] == segment_id and r["status"] == "done" and r["processed_wav"]:
+            if r["id"] == segment_id and r["status"] == "done" and r["processed_wav"] \
+                    and Path(r["processed_wav"]).is_file():
                 return FileResponse(r["processed_wav"], media_type="audio/wav")
         raise HTTPException(404)
 
@@ -518,8 +521,9 @@ def create_app(services: Optional[Services] = None, worker: Optional[TTSWorker] 
     @app.get("/api/jobs/{job_id}/segments/{segment_id}/audio")
     async def segment_audio(job_id: str, segment_id: str):
         row = store.get_segment(job_id, segment_id)
-        if row is None or row["status"] != "done" or not row["processed_wav"]:
-            raise HTTPException(404)
+        if row is None or row["status"] != "done" or not row["processed_wav"] \
+                or not Path(row["processed_wav"]).is_file():
+            raise HTTPException(404)  # cleaned up after the chapter's MP3 was written
         return FileResponse(row["processed_wav"], media_type="audio/wav")
 
     @app.get("/api/jobs/{job_id}/chapters/{n}/audio")
@@ -537,7 +541,7 @@ def create_app(services: Optional[Services] = None, worker: Optional[TTSWorker] 
         return [
             {"segment_id": r["id"], "url": f"/api/jobs/{job_id}/segments/{r['id']}/audio",
              "duration_s": r["duration_s"], "pause_after_ms": r["pause_after_ms"]}
-            for r in rows if r["status"] == "done"
+            for r in rows if r["status"] == "done" and r["processed_wav"] and Path(r["processed_wav"]).is_file()
         ]
 
     # ------------------------------------------------------------------ SSE

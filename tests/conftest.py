@@ -1,9 +1,12 @@
+import atexit
 import os
+import shutil
 import tempfile
 
 # Never touch the user's real app data: point every MyTTS directory at a throwaway location
 # BEFORE mytts.config is imported (it reads these at import time).
 _TEST_HOME = tempfile.mkdtemp(prefix="mytts-tests-")
+atexit.register(shutil.rmtree, _TEST_HOME, True)  # no test audio left behind
 for _var, _sub in (("MYTTS_DATA_DIR", "data"), ("MYTTS_USER_VOICES_DIR", "voices"),
                    ("MYTTS_OUTPUT_DIR", "out")):
     os.environ[_var] = os.path.join(_TEST_HOME, _sub)

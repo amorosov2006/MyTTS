@@ -523,6 +523,18 @@ class Store:
         with self._lock:
             return self._conn.execute("SELECT * FROM samples WHERE id=?", (sample_id,)).fetchone()
 
+    def delete_sample(self, sample_id: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM sample_segments WHERE sample_id=?", (sample_id,))
+            self._conn.execute("DELETE FROM samples WHERE id=?", (sample_id,))
+
+    def raw_wavs_of_done_segments(self, job_id: str) -> list[Path]:
+        with self._lock:
+            ids = [r[0] for r in self._conn.execute(
+                "SELECT id FROM segments WHERE job_id=? AND status='done'", (job_id,))]
+        raw = config.DATA_DIR / "jobs" / job_id / "raw"
+        return [raw / f"{i}.wav" for i in ids]
+
     def list_samples(self, job_id: str) -> list[sqlite3.Row]:
         with self._lock:
             return self._conn.execute(

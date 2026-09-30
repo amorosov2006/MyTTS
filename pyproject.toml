@@ -50,3 +50,4 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = ["gpu: needs the real MLX model (run alone, under memguard)"]
 addopts = "-m 'not gpu'"
+tmp_path_retention_policy = "none"  # pytest keeps tmp dirs (with test WAVs) of past runs by default

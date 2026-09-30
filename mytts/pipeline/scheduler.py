@@ -26,6 +26,7 @@ from mytts.contracts import (
     SampleInfo, SampleRequest, Segment, SynthesisItem, SynthesisResult, TTSWorker,
     WorkerCrashed,
 )
+from mytts.pipeline import cleanup
 from mytts.pipeline.cloud_worker import gemini_voice
 from mytts.pipeline.events import EventBus
 from mytts.pipeline.services import Services
@@ -35,6 +36,7 @@ from mytts.voices import VoiceRegistry
 log = logging.getLogger("mytts.scheduler")
 
 MAX_BATCH_RETRIES = 3
+CHAPTER_WAV_GRACE_S = 120  # keep a finished chapter's segment WAVs briefly: the player switches over
 FALLBACK_CHARS_PER_S = 14.0
 FALLBACK_REALTIME_X = 8.0
 _IDLE_TICK_S = 1.0
@@ -100,6 +102,7 @@ class Scheduler:
         self._wakeup = asyncio.Event()
         self._task: Optional[asyncio.Task] = None
         self._bg_tasks: set[asyncio.Task] = set()
+        self._cleanup_tasks: set[asyncio.Task] = set()  # delayed; startup_cleanup covers them
         self._stopped = True
 
     # ------------------------------------------------------------------ lifecycle
@@ -112,6 +115,10 @@ class Scheduler:
                                        error="Interrupted — press Resume")
             self._unstick_chapters(info.id)
         self.store.reset_running_sample_segments()
+        try:
+            await asyncio.to_thread(cleanup.startup_cleanup, self.store)
+        except Exception:
+            log.exception("startup cleanup failed")
         self._stopped = False
         self._task = asyncio.create_task(self._dispatch_loop())
 
@@ -124,6 +131,8 @@ class Scheduler:
             except asyncio.TimeoutError:
                 self._task.cancel()
                 await asyncio.gather(self._task, return_exceptions=True)
+        for task in list(self._cleanup_tasks):
+            task.cancel()
         if self._bg_tasks:
             await asyncio.wait(list(self._bg_tasks), timeout=timeout_s)
         if self._owns_executor:
@@ -141,6 +150,15 @@ class Scheduler:
         for c in self.store.get_chapters(job_id):
             if c.include and c.status in ("running", "pending") and c.segments_total:
                 self._track_bg(asyncio.ensure_future(self._maybe_finish_chapter(job_id, c.index, settings)))
+
+    def _later(self, delay_s: float, fn, *args) -> None:
+        """Run a blocking cleanup function after a delay, off the event loop."""
+        async def run() -> None:
+            await asyncio.sleep(delay_s)
+            await asyncio.to_thread(fn, *args)
+        task = asyncio.ensure_future(run())
+        self._cleanup_tasks.add(task)
+        task.add_done_callback(self._cleanup_tasks.discard)
 
     def _track_bg(self, task: "asyncio.Task") -> None:
         self._bg_tasks.add(task)
@@ -323,6 +341,7 @@ class Scheduler:
         self._run_queue = [j for j in self._run_queue if j != job_id]
         self._job_stats.pop(job_id, None)
         self.store.update_job(job_id, status=JobStatus.cancelled)
+        self._later(CHAPTER_WAV_GRACE_S, cleanup.prune_finished_job, job_id)
         self._publish_job(job_id, force=True)
         return self.store.get_job_info(job_id)
 
@@ -372,6 +391,7 @@ class Scheduler:
         )
         if not segments:
             raise ConflictError("Nothing to read in the sample text")
+        await asyncio.to_thread(cleanup.prune_samples, self.store, job_id, cleanup.KEEP_SAMPLES_PER_JOB - 1)
         sid = new_id("smp")
         segments = [s.model_copy(update={"id": f"{sid}-{i:04d}"}) for i, s in enumerate(segments)]
         text = "\n\n".join(paragraphs)
@@ -535,7 +555,9 @@ class Scheduler:
                 self._log(job_id, "info", "Gemini quota window reset — resuming")
                 await self.resume_job(job_id)
 
-        self._track_bg(asyncio.ensure_future(resume_later()))
+        task = asyncio.ensure_future(resume_later())
+        self._cleanup_tasks.add(task)
+        task.add_done_callback(self._cleanup_tasks.discard)
 
     def _pause_job_with_error(self, job_id: str, message: str) -> None:
         self._run_queue = [j for j in self._run_queue if j != job_id]
@@ -572,6 +594,7 @@ class Scheduler:
                 self._update_progress(job_id)
                 await self._maybe_finish_chapter(job_id, seg_row["chapter"], settings)
                 return
+            cleanup.remove(result.out_wav)
             if not self.store.job_exists(job_id):
                 return
             self.store.mark_segment_done(job_id, seg_row["id"], str(out_wav), duration, result.cer,
@@ -679,6 +702,7 @@ class Scheduler:
                 await self._maybe_finish_job(job_id)
                 return
             self.store.set_chapter_file(job_id, chapter, str(out_path))
+            self._later(CHAPTER_WAV_GRACE_S, cleanup.remove_many, [p for p, _ in seg_list])
         self.store.update_chapter_state(
             job_id, chapter, status="done", duration_s=duration,
             audio_url=f"/api/jobs/{job_id}/chapters/{chapter}/audio" if seg_list else None,
@@ -733,6 +757,7 @@ class Scheduler:
                     log.exception("m4b build failed")
                     self._log(job_id, "error", f"M4B build failed (chapter MP3s are fine): {e}")
         self.store.update_job(job_id, status=JobStatus.done, output_path=str(out_dir))
+        self._later(CHAPTER_WAV_GRACE_S, cleanup.prune_finished_job, job_id)
         self._run_queue = [j for j in self._run_queue if j != job_id]
         self._job_stats.pop(job_id, None)
         self._retries.pop(job_id, None)
@@ -790,6 +815,7 @@ class Scheduler:
                 if self.store.sample_segments_pending_count(sample_id) == 0:
                     await self._finish_sample(sample_id, job_id, settings)
                 return
+            cleanup.remove(result.out_wav)
             self.store.mark_sample_segment_done(sample_id, seg_row["id"], str(out_wav), duration)
             self.store.refresh_sample_segment_urls(sample_id, job_id)
         self._publish_sample(sample_id)

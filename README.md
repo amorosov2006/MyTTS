@@ -109,3 +109,7 @@ The rest of the project documentation:
 - Russian word stress comes from the model. Qwen3-TTS doesn't accept stress marks, so homographs such as «за́мок / замо́к» can be misread.
 - Russian number agreement is heuristic. Case after most prepositions and grammatical gender for 1/2 are handled; rarer constructions may read in the nominative case.
 - Complex PDF layouts (multi-column pages, heavy footnotes) are parsed heuristically. Check the chapter preview before converting.
+
+## License
+
+MIT. See [LICENSE](LICENSE). The license covers this code only. Model weights (Qwen3-TTS, Whisper) and the Gemini API come under their own terms.
